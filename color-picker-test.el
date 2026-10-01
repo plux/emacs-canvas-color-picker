@@ -374,6 +374,84 @@
     (should (eq (get-text-property 0 'pointer display-string) 'arrow))
     (should (get-text-property 0 'local-map display-string))))
 
+(ert-deftest emacs-canvas-color-picker-test-state-remembers-caller-window ()
+  "The picker uses the caller's window after it takes focus."
+  (let ((emacs-canvas-color-picker-scale 1.0))
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'selected-window) (lambda () 'caller-window))
+                ((symbol-function 'frame-char-height) (lambda (&optional _frame) 32)))
+        (let ((state (emacs-canvas-color-picker--make-state #'ignore nil (current-buffer))))
+          (should (eq (emacs-canvas-color-picker--state-parent-window state)
+                      'caller-window)))))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-near-cursor ()
+  "The picker opens beside point in the caller's window."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point)
+             (lambda (point window)
+               (should (= point 12))
+               (should (eq window 'caller-window))
+               '(caller-window 12 (30 . 20) 0 nil 12 nil nil nil (15 . 18))))
+            ((symbol-function 'window-inside-pixel-edges)
+             (lambda (_window) '(100 60 800 650))))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 200 160 'caller-window)
+                   '(153 . 80)))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-uses-left-side ()
+  "The picker moves left when the right side cannot hold it."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point)
+             (lambda (&rest _args)
+               '(caller-window 12 (650 . 20) 0 nil 12 nil nil nil (15 . 18))))
+            ((symbol-function 'window-inside-pixel-edges)
+             (lambda (_window) '(100 60 800 650))))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 200 160 'caller-window)
+                   '(542 . 80)))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-clamps-width ()
+  "The picker stays within the parent when neither side fits."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 300))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point)
+             (lambda (&rest _args)
+               '(caller-window 12 (145 . 20) 0 nil 12 nil nil nil (15 . 18))))
+            ((symbol-function 'window-inside-pixel-edges)
+             (lambda (_window) '(0 0 300 650))))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 200 160 'caller-window)
+                   '(0 . 20)))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-clamps-height ()
+  "The picker keeps its top edge within the parent frame."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point)
+             (lambda (&rest _args)
+               '(caller-window 12 (30 . 600) 0 nil 12 nil nil nil (15 . 18))))
+            ((symbol-function 'window-inside-pixel-edges)
+             (lambda (_window) '(100 60 800 650))))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 200 160 'caller-window)
+                   '(153 . 540)))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-invisible-point ()
+  "The old clamped position remains available when point is invisible."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 300))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 250))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point) (lambda (&rest _args) nil)))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 280 240 'caller-window)
+                   '(20 . 10)))))
+
 (ert-deftest emacs-canvas-color-picker-test-focus-frame-selects-picker-window ()
   "Focusing the picker selects the child frame and root window."
   (let ((calls nil))

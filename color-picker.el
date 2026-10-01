@@ -103,6 +103,7 @@ The picker keeps its layout proportions at other scale values."
                (:constructor emacs-canvas-color-picker--state-create))
   frame
   parent-frame
+  parent-window
   buffer
   canvas
   base-canvas
@@ -898,13 +899,24 @@ Return the current coordinates when they are available."
            ;; The child frame can be one pixel shorter than its requested height.
            1)))
 
-(defun emacs-canvas-color-picker--frame-position (parent width height)
-  "Return a child-frame position inside PARENT for WIDTH and HEIGHT."
+(defun emacs-canvas-color-picker--frame-position (parent width height &optional window)
+  "Return child-frame position inside PARENT near point in WINDOW."
   (let* ((parent-width (frame-pixel-width parent))
          (parent-height (frame-pixel-height parent))
-         (left (max 0 (min (- parent-width width) 40)))
-         (top (max 0 (min (- parent-height height) 40))))
-    (cons left top)))
+         (position (and window (posn-at-point (window-point window) window)))
+         (edges (and position (window-inside-pixel-edges window)))
+         (xy (and position (posn-x-y position)))
+         (cursor-x (and xy (+ (nth 0 edges) (car xy))))
+         (cursor-y (and xy (+ (nth 1 edges) (cdr xy))))
+         (cursor-width (or (car (nth 9 position)) 0))
+         (gap 8)
+         (right (and cursor-x (+ cursor-x cursor-width gap)))
+         (left (cond ((and right (<= (+ right width) parent-width)) right)
+                     (cursor-x (- cursor-x width gap))
+                     (t 40)))
+         (top (or cursor-y 40)))
+    (cons (max 0 (min (- parent-width width) left))
+          (max 0 (min (- parent-height height) top)))))
 
 (defun emacs-canvas-color-picker--focus-frame (frame)
   "Select FRAME and its root window for keyboard input."
@@ -941,7 +953,9 @@ Return the current coordinates when they are available."
          (frame-size (emacs-canvas-color-picker--frame-size geometry parent))
          (width (car frame-size))
          (height (cdr frame-size))
-         (position (emacs-canvas-color-picker--frame-position parent width height))
+         (position (emacs-canvas-color-picker--frame-position
+                    parent width height
+                    (emacs-canvas-color-picker--state-parent-window state)))
          (frame (make-frame
                  (emacs-canvas-color-picker--frame-parameters
                   parent width height (car position) (cdr position)))))
@@ -973,6 +987,7 @@ Return the current coordinates when they are available."
     (error "Callback must be callable"))
   (let* ((hsv (emacs-canvas-color-picker--initial-hsv initial-color))
          (parent-frame (selected-frame))
+         (parent-window (selected-window))
          (geometry (emacs-canvas-color-picker--make-geometry nil parent-frame))
          (data (make-vector (* (emacs-canvas-color-picker--geometry-width geometry)
                                (emacs-canvas-color-picker--geometry-height geometry))
@@ -983,6 +998,7 @@ Return the current coordinates when they are available."
          (buffer (or buffer (get-buffer-create emacs-canvas-color-picker--buffer-name))))
     (emacs-canvas-color-picker--state-create
      :parent-frame parent-frame
+     :parent-window parent-window
      :buffer buffer
      :canvas canvas
      :base-canvas base-canvas
