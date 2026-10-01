@@ -16,7 +16,8 @@
   :type 'string)
 
 (defcustom emacs-canvas-color-picker-scale 1.0
-  "Scale the picker layout uniformly in canvas pixels."
+  "Multiply the picker width of ten parent-frame character heights.
+The picker keeps its layout proportions at other scale values."
   :type 'number)
 
 (defcustom emacs-canvas-color-picker-native-module-file
@@ -224,8 +225,9 @@
           (ash (emacs-canvas-color-picker--clamp-byte green) 8)
           (emacs-canvas-color-picker--clamp-byte blue)))
 
-(defun emacs-canvas-color-picker--make-geometry (&optional plist)
-  "Return color picker geometry with optional base pixel overrides from PLIST."
+(defun emacs-canvas-color-picker--make-geometry (&optional plist parent-frame)
+  "Return picker geometry with base overrides from PLIST.
+When PARENT-FRAME is non-nil, target ten of its character heights in width."
   (let ((scale emacs-canvas-color-picker-scale))
     (unless (and (or (integerp scale) (floatp scale)) (> scale 0)
                  (not (isnan (float scale))) (< (float scale) 1.0e+INF))
@@ -244,6 +246,13 @@
                            base-swatch-height base-swatch-gap))
         (unless (and (integerp value) (>= value 0))
           (error "Geometry values must be non-negative integers")))
+      (when parent-frame
+        (let ((base-width (+ (* 2 base-padding) base-sv-width base-gap
+                             base-hue-width)))
+          (unless (> base-width 0)
+            (error "Base picker width must be positive"))
+          (setq scale (* scale (/ (* 10.0 (frame-char-height parent-frame))
+                                  base-width)))))
       (let* ((padding (round (* base-padding scale)))
              (sv-width (round (* base-sv-width scale)))
              (sv-height (round (* base-sv-height scale)))
@@ -963,7 +972,8 @@ Return the current coordinates when they are available."
   (unless (functionp callback)
     (error "Callback must be callable"))
   (let* ((hsv (emacs-canvas-color-picker--initial-hsv initial-color))
-         (geometry (emacs-canvas-color-picker--make-geometry))
+         (parent-frame (selected-frame))
+         (geometry (emacs-canvas-color-picker--make-geometry nil parent-frame))
          (data (make-vector (* (emacs-canvas-color-picker--geometry-width geometry)
                                (emacs-canvas-color-picker--geometry-height geometry))
                             emacs-canvas-color-picker--background))
@@ -972,7 +982,7 @@ Return the current coordinates when they are available."
          (base-canvas (emacs-canvas-color-picker--make-canvas geometry base-data))
          (buffer (or buffer (get-buffer-create emacs-canvas-color-picker--buffer-name))))
     (emacs-canvas-color-picker--state-create
-     :parent-frame (selected-frame)
+     :parent-frame parent-frame
      :buffer buffer
      :canvas canvas
      :base-canvas base-canvas

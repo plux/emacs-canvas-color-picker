@@ -542,22 +542,56 @@
         (should-not (emacs-canvas-color-picker--hit-test geometry (1+ hue-right) top))
         (should-not (emacs-canvas-color-picker--hit-test geometry hue-left (1+ hue-bottom)))))))
 
+(ert-deftest emacs-canvas-color-picker-test-scale-follows-parent-character-height ()
+  "Scale one targets ten parent-frame character heights for canvas width."
+  (dolist (char-height '(20 43))
+    (ert-info ((format "character height %s" char-height))
+      (let ((emacs-canvas-color-picker-scale 1.0))
+        (with-temp-buffer
+          (cl-letf (((symbol-function 'selected-frame) (lambda () 'parent-frame))
+                    ((symbol-function 'frame-char-height)
+                     (lambda (frame)
+                       (should (eq frame 'parent-frame))
+                       char-height)))
+            (let* ((state (emacs-canvas-color-picker--make-state
+                           #'ignore nil (current-buffer)))
+                   (geometry (emacs-canvas-color-picker--state-geometry state))
+                   (width (emacs-canvas-color-picker--geometry-width geometry)))
+              (should (eq (emacs-canvas-color-picker--state-parent-frame state)
+                          'parent-frame))
+              (should (<= (abs (- width (* 10 char-height))) 2))
+              (should (= (plist-get (cdr (emacs-canvas-color-picker--state-canvas state))
+                                    :data-width)
+                         width)))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-scale-multiplies-character-target ()
+  "Scale 1.5 targets fifteen parent-frame character heights."
+  (let ((emacs-canvas-color-picker-scale 1.5))
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'selected-frame) (lambda () 'parent-frame))
+                ((symbol-function 'frame-char-height) (lambda (_frame) 43)))
+        (let* ((state (emacs-canvas-color-picker--make-state
+                       #'ignore nil (current-buffer)))
+               (geometry (emacs-canvas-color-picker--state-geometry state)))
+          (should (<= (abs (- (emacs-canvas-color-picker--geometry-width geometry)
+                              (* 15 43))) 2)))))))
+
 (ert-deftest emacs-canvas-color-picker-test-scale-state-canvas-size ()
   "Both state canvases and vectors use scaled geometry dimensions."
   (let ((emacs-canvas-color-picker-scale 0.5))
     (with-temp-buffer
-      (let* ((state (emacs-canvas-color-picker--make-state #'ignore nil (current-buffer)))
-             (geometry (emacs-canvas-color-picker--state-geometry state))
-             (width (emacs-canvas-color-picker--geometry-width geometry))
-             (height (emacs-canvas-color-picker--geometry-height geometry)))
-        (should (= width 158))
-        (should (= height 160))
-        (dolist (canvas (list (emacs-canvas-color-picker--state-canvas state)
-                              (emacs-canvas-color-picker--state-base-canvas state)))
-          (should (= (plist-get (cdr canvas) :data-width) width))
-          (should (= (plist-get (cdr canvas) :data-height) height)))
-        (should (= (length (emacs-canvas-color-picker--state-data state)) (* width height)))
-        (should (= (length (emacs-canvas-color-picker--state-base-data state)) (* width height)))))))
+      (cl-letf (((symbol-function 'frame-char-height) (lambda (&optional _frame) 32)))
+        (let* ((state (emacs-canvas-color-picker--make-state #'ignore nil (current-buffer)))
+               (geometry (emacs-canvas-color-picker--state-geometry state))
+               (width (emacs-canvas-color-picker--geometry-width geometry))
+               (height (emacs-canvas-color-picker--geometry-height geometry)))
+          (should (<= (abs (- width 160)) 2))
+          (dolist (canvas (list (emacs-canvas-color-picker--state-canvas state)
+                                (emacs-canvas-color-picker--state-base-canvas state)))
+            (should (= (plist-get (cdr canvas) :data-width) width))
+            (should (= (plist-get (cdr canvas) :data-height) height)))
+          (should (= (length (emacs-canvas-color-picker--state-data state)) (* width height)))
+          (should (= (length (emacs-canvas-color-picker--state-base-data state)) (* width height))))))))
 
 (ert-deftest emacs-canvas-color-picker-test-scale-elisp-render-regions ()
   "Scaled drawing writes opaque palette and swatch pixels into its vector."
