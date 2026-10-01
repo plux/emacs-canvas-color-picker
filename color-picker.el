@@ -964,55 +964,75 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
   (emacs-canvas-color-picker--open-state
    (emacs-canvas-color-picker--make-state callback initial-color)))
 
-(defun emacs-canvas-color-picker--hex-char-p (char)
-  "Return non-nil when CHAR is a hex digit."
-  (and char (string-match-p "[[:xdigit:]]" (char-to-string char))))
+(defun emacs-canvas-color-picker--hex-token-char-p (char)
+  "Return non-nil when CHAR belongs to an alphanumeric token."
+  (and char (string-match-p "[[:alnum:]]" (char-to-string char))))
 
 (defun emacs-canvas-color-picker--hex-boundary-before-p (position)
-  "Return non-nil when the character before POSITION is not a hex digit."
+  "Return non-nil when the character before POSITION is not alphanumeric."
   (or (<= position (point-min))
-      (not (emacs-canvas-color-picker--hex-char-p (char-before position)))))
+      (not (emacs-canvas-color-picker--hex-token-char-p (char-before position)))))
 
 (defun emacs-canvas-color-picker--hex-boundary-after-p (position)
-  "Return non-nil when the character after POSITION is not a hex digit."
+  "Return non-nil when the character after POSITION is not alphanumeric."
   (or (>= position (point-max))
-      (not (emacs-canvas-color-picker--hex-char-p (char-after position)))))
+      (not (emacs-canvas-color-picker--hex-token-char-p (char-after position)))))
 
 (defun emacs-canvas-color-picker--hex-at-point-bounds ()
-  "Return plist for a hex color at point, or nil."
+  "Return plist for a complete hex color at point, or nil."
   (let ((pos (point))
         result)
     (save-excursion
       (goto-char (point-min))
       (while (and (not result)
-                  (re-search-forward "#?[[:xdigit:]]\\{6\\}" nil t))
+                  (re-search-forward
+                   "\\(?:#x[[:xdigit:]]\\{8\\}\\|#x[[:xdigit:]]\\{6\\}\\|0x[[:xdigit:]]\\{6\\}\\|#[[:xdigit:]]\\{8\\}\\|#[[:xdigit:]]\\{6\\}\\|[[:xdigit:]]\\{6\\}\\)"
+                   nil t))
         (let* ((start (match-beginning 0))
                (end (match-end 0))
-               (text (match-string 0))
-               (prefixed (string-prefix-p "#" text))
-               (hex-start (if prefixed (1+ start) start))
-               (hex-end end))
+               (text (match-string 0)))
           (when (and (>= pos start)
-                     (<= pos end)
-                     (or prefixed (emacs-canvas-color-picker--hex-boundary-before-p start))
+                     (< pos end)
+                     (emacs-canvas-color-picker--hex-boundary-before-p start)
                      (emacs-canvas-color-picker--hex-boundary-after-p end))
-            (setq result (list :start start
-                               :end end
-                               :hex-start hex-start
-                               :hex-end hex-end
-                               :text text
-                               :prefixed prefixed))))))
+            (let* ((emacs-hex (string-prefix-p "#x" text))
+                   (c-hex (string-prefix-p "0x" text))
+                   (css-hex (and (not emacs-hex) (string-prefix-p "#" text)))
+                   (alpha (cond ((and emacs-hex (= (length text) 10)) (substring text 2 4))
+                                ((and css-hex (= (length text) 9)) (substring text 7 9))))
+                   (rgb (cond ((and emacs-hex alpha) (substring text 4))
+                              ((or emacs-hex c-hex) (substring text 2))
+                              (css-hex (substring text 1 7))
+                              (t text)))
+                   (format (cond ((and emacs-hex alpha) 'emacs-argb)
+                                 (emacs-hex 'emacs-rgb)
+                                 (c-hex 'c-rgb)
+                                 (alpha 'css-rgba)
+                                 (css-hex 'css-rgb)
+                                 (t 'bare))))
+              (setq result (list :start start :end end :text text
+                                 :prefixed css-hex :rgb rgb :alpha alpha
+                                 :format format)))))))
     result))
 
-(defun emacs-canvas-color-picker--format-hex-for-prefix (hex prefixed)
-  "Return HEX with or without # depending on PREFIXED."
-  (if prefixed
-      hex
-    (if (string-prefix-p "#" hex)
-        (substring hex 1)
-      hex)))
+(defun emacs-canvas-color-picker--validate-output-format (format)
+  "Signal an error unless FORMAT names a supported output format."
+  (unless (memq format '(nil css-rgb css-rgba emacs-argb emacs-rgb c-rgb))
+    (error "Unsupported color output format: %S" format)))
 
-(defun emacs-canvas-color-picker--make-insert-state (target-buffer &optional initial-color)
+(defun emacs-canvas-color-picker--format-hex (hex format &optional alpha)
+  "Format selected HEX in FORMAT, preserving existing ALPHA when supplied."
+  (let ((rgb (substring hex 1)))
+    (pcase format
+      ((or 'nil 'css-rgb) hex)
+      ('bare rgb)
+      ('css-rgba (concat hex (or alpha "ff")))
+      ('emacs-argb (concat "#x" (or alpha "ff") rgb))
+      ('emacs-rgb (concat "#x" rgb))
+      ('c-rgb (concat "0x" rgb))
+      (_ (error "Unsupported color output format: %S" format)))))
+
+(defun emacs-canvas-color-picker--make-insert-state (target-buffer &optional initial-color output-format)
   "Return insert-only picker state for TARGET-BUFFER."
   (let ((marker (copy-marker (point) t)))
     (emacs-canvas-color-picker--make-state
@@ -1021,14 +1041,14 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
          (with-current-buffer target-buffer
            (save-excursion
              (goto-char marker)
-             (insert hex))))
+             (insert (emacs-canvas-color-picker--format-hex hex output-format)))))
        (set-marker marker nil))
      initial-color)))
 
 (defun emacs-canvas-color-picker--make-at-point-state (target-buffer)
   "Return at-point picker state for TARGET-BUFFER."
   (let* ((match (emacs-canvas-color-picker--hex-at-point-bounds))
-         (initial-color (and match (plist-get match :text)))
+         (initial-color (and match (plist-get match :rgb)))
          (insert-marker (copy-marker (point) t))
          (state (emacs-canvas-color-picker--make-state
                  (lambda (hex)
@@ -1039,8 +1059,9 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
                              (progn
                                (goto-char (plist-get match :start))
                                (delete-region (plist-get match :start) (plist-get match :end))
-                               (insert (emacs-canvas-color-picker--format-hex-for-prefix
-                                        hex (plist-get match :prefixed))))
+                               (insert (emacs-canvas-color-picker--format-hex
+                                        hex (plist-get match :format)
+                                        (plist-get match :alpha))))
                            (goto-char insert-marker)
                            (insert hex)))))
                    (set-marker insert-marker nil))
@@ -1052,25 +1073,33 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
     state))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-copy (&optional initial-color)
+(defun emacs-canvas-color-picker-copy (&optional initial-color output-format)
   "Open the color picker and copy the selected hex color.
 
-INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
+INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
+OUTPUT-FORMAT selects `css-rgb', `css-rgba', `emacs-argb',
+`emacs-rgb', or `c-rgb'; nil uses `css-rgb'."
   (interactive)
+  (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker-read-color
    (lambda (hex)
-     (kill-new hex)
-     (message "Copied color %s" hex))
+     (let ((formatted (emacs-canvas-color-picker--format-hex hex output-format)))
+       (kill-new formatted)
+       (message "Copied color %s" formatted)))
    initial-color))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-insert (&optional initial-color)
+(defun emacs-canvas-color-picker-insert (&optional initial-color output-format)
   "Open the color picker and insert the selected hex color at point.
 
-INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
+INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
+OUTPUT-FORMAT selects `css-rgb', `css-rgba', `emacs-argb',
+`emacs-rgb', or `c-rgb'; nil uses `css-rgb'."
   (interactive)
+  (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker--open-state
-   (emacs-canvas-color-picker--make-insert-state (current-buffer) initial-color)))
+   (emacs-canvas-color-picker--make-insert-state
+    (current-buffer) initial-color output-format)))
 
 ;;;###autoload
 (defun emacs-canvas-color-picker-at-point ()

@@ -515,6 +515,227 @@
   (should (commandp 'emacs-canvas-color-picker-insert))
   (should (commandp 'emacs-canvas-color-picker-at-point)))
 
+(defun emacs-canvas-color-picker-test--at-point (text offset expected &optional initial)
+  "Accept a color at OFFSET in TEXT and compare it with EXPECTED."
+  (with-temp-buffer
+    (insert text)
+    (goto-char (+ (point-min) offset))
+    (let ((state (emacs-canvas-color-picker--make-at-point-state (current-buffer))))
+      (when initial
+        (let ((hsv (emacs-canvas-color-picker--hex-to-hsv initial)))
+          (should (emacs-canvas-color-picker-test--close-to
+                   (emacs-canvas-color-picker--state-hue state) (nth 0 hsv)))
+          (should (emacs-canvas-color-picker-test--close-to
+                   (emacs-canvas-color-picker--state-saturation state) (nth 1 hsv)))
+          (should (emacs-canvas-color-picker-test--close-to
+                   (emacs-canvas-color-picker--state-value state) (nth 2 hsv)))))
+      (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc")
+      (should (equal (buffer-string) expected)))))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-css-rgba-keeps-alpha ()
+  "CSS RGBA starts from RGB and preserves its trailing alpha."
+  (emacs-canvas-color-picker-test--at-point
+   "#11223344" 3 "#aabbcc44" "#112233"))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-preserves-mixed-alpha-case ()
+  "Keep existing alpha text while converting selected RGB to lowercase."
+  (dolist (case '(("#112233aF" 8 "#aabbccaF")
+                  ("#xaF112233" 3 "#xaFaabbcc")
+                  ("#xfA112233" 3 "#xfAaabbcc")))
+    (ert-info ((car case))
+      (emacs-canvas-color-picker-test--at-point
+       (nth 0 case) (nth 1 case) (nth 2 case) "#112233"))))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-supported-prefixes ()
+  "Recognize complete Emacs, C, CSS, and bare literals."
+  (dolist (case '(("#x44112233" "#x44aabbcc")
+                  ("#x112233" "#xaabbcc")
+                  ("0x112233" "0xaabbcc")
+                  ("#112233" "#aabbcc")
+                  ("112233" "aabbcc")))
+    (ert-info ((car case))
+      (emacs-canvas-color-picker-test--at-point
+       (car case) 3 (cadr case) "#112233"))))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-uppercase-rgb ()
+  "Initialize from uppercase digits and emit lowercase selected RGB."
+  (dolist (case '(("#AABBCCdE" "#aabbccdE")
+                  ("#xdEAABBCC" "#xdEaabbcc")
+                  ("#xAABBCC" "#xaabbcc")
+                  ("0xAABBCC" "0xaabbcc")
+                  ("#AABBCC" "#aabbcc")
+                  ("AABBCC" "aabbcc")))
+    (ert-info ((car case))
+      (emacs-canvas-color-picker-test--at-point
+       (car case) 3 (cadr case) "#aabbcc"))))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-any-character ()
+  "Point on prefixes, RGB, and alpha identifies the full literal."
+  (dolist (case '(("#11223344" "#aabbcc44")
+                  ("#x44112233" "#x44aabbcc")
+                  ("#x112233" "#xaabbcc")
+                  ("0x112233" "0xaabbcc")
+                  ("#112233" "#aabbcc")
+                  ("112233" "aabbcc")))
+    (dotimes (offset (length (car case)))
+      (ert-info ((format "%s at %d" (car case) offset))
+        (emacs-canvas-color-picker-test--at-point
+         (car case) offset (cadr case) "#112233")))))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-preserves-neighbors ()
+  "Replace only the literal at point, even between other literals."
+  (emacs-canvas-color-picker-test--at-point
+   "L:#11223344; R:#44556677" 5 "L:#aabbcc44; R:#44556677" "#112233")
+  (emacs-canvas-color-picker-test--at-point
+   "(#x44112233)" 5 "(#x44aabbcc)" "#112233"))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-rejects-partial-tokens ()
+  "Insert at point instead of replacing a substring of a larger token."
+  (dolist (text '("#112233445" "#x441122334" "0x1122334" "1122334"
+                  "#1122334" "#x11223" "0x11223" "#11223g44"
+                  "g112233" "#112233g" "112233z"))
+    (ert-info (text)
+      (emacs-canvas-color-picker-test--at-point
+       text 3 (concat (substring text 0 3) "#aabbcc" (substring text 3))))))
+
+(ert-deftest emacs-canvas-color-picker-test-at-point-unsupported-inserts ()
+  "Insert into ordinary text or an empty buffer without replacement."
+  (emacs-canvas-color-picker-test--at-point "" 0 "#aabbcc")
+  (emacs-canvas-color-picker-test--at-point "word" 2 "wo#aabbccrd"))
+
+(ert-deftest emacs-canvas-color-picker-test-copy-default-output ()
+  "The default copy command writes the chosen RGB to the kill ring."
+  (with-temp-buffer
+    (insert "keep")
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil))
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker-read-color)
+                 (lambda (callback &rest _args) (funcall callback "#aabbcc"))))
+        (emacs-canvas-color-picker-copy)
+        (should (equal (car kill-ring) "#aabbcc"))
+        (should (equal (buffer-string) "keep"))))))
+
+(ert-deftest emacs-canvas-color-picker-test-insert-default-output ()
+  "The default insert command writes chosen RGB without replacement."
+  (with-temp-buffer
+    (insert "keep")
+    (goto-char 3)
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+               (lambda (state)
+                 (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc"))))
+      (emacs-canvas-color-picker-insert)
+      (should (equal (buffer-string) "ke#aabbccep")))))
+
+(ert-deftest emacs-canvas-color-picker-test-copy-output-formats ()
+  "Copy the chosen color in the requested format, with lowercase alpha."
+  (dolist (case '((nil "#aabbcc")
+                  (css-rgb "#aabbcc")
+                  (css-rgba "#aabbccff")
+                  (emacs-argb "#xffaabbcc")
+                  (emacs-rgb "#xaabbcc")
+                  (c-rgb "0xaabbcc")))
+    (ert-info ((format "%s" (car case)))
+      (with-temp-buffer
+        (insert "keep")
+        (let ((kill-ring nil)
+              (kill-ring-yank-pointer nil)
+              (received nil))
+          (cl-letf (((symbol-function 'emacs-canvas-color-picker-read-color)
+                     (lambda (callback &rest args)
+                       (setq received args)
+                       (funcall callback "#aabbcc"))))
+            (emacs-canvas-color-picker-copy "#DDEEFF" (car case))
+            (should (equal (car received) "#DDEEFF"))
+            (should (equal (car kill-ring) (cadr case)))
+            (should (equal (buffer-string) "keep"))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-copy-bare-initial-color ()
+  "The first argument also accepts bare six-digit RGB."
+  (with-temp-buffer
+    (let ((kill-ring nil)
+          (kill-ring-yank-pointer nil)
+          (received nil))
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker-read-color)
+                 (lambda (callback &rest args)
+                   (setq received args)
+                   (funcall callback "#aabbcc"))))
+        (emacs-canvas-color-picker-copy "DDEEFF" 'css-rgba)
+        (should (equal (car received) "DDEEFF"))
+        (should (equal (car kill-ring) "#aabbccff"))))))
+
+(ert-deftest emacs-canvas-color-picker-test-insert-output-formats ()
+  "Insert formatted selected RGB without replacing an existing literal."
+  (dolist (case '((nil "#aabbcc")
+                  (css-rgb "#aabbcc")
+                  (css-rgba "#aabbccff")
+                  (emacs-argb "#xffaabbcc")
+                  (emacs-rgb "#xaabbcc")
+                  (c-rgb "0xaabbcc")))
+    (ert-info ((format "%s" (car case)))
+      (with-temp-buffer
+        (insert "#112233")
+        (goto-char 4)
+        (let ((initial-hsv (emacs-canvas-color-picker--hex-to-hsv "#DDEEFF"))
+              (opened 0))
+          (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+                     (lambda (state)
+                       (setq opened (1+ opened))
+                       (should (emacs-canvas-color-picker-test--close-to
+                                (emacs-canvas-color-picker--state-hue state) (nth 0 initial-hsv)))
+                       (should (emacs-canvas-color-picker-test--close-to
+                                (emacs-canvas-color-picker--state-saturation state) (nth 1 initial-hsv)))
+                       (should (emacs-canvas-color-picker-test--close-to
+                                (emacs-canvas-color-picker--state-value state) (nth 2 initial-hsv)))
+                       (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc"))))
+            (emacs-canvas-color-picker-insert "#DDEEFF" (car case))
+            (should (= opened 1))
+            (should (equal (buffer-string)
+                           (concat "#11" (cadr case) "2233")))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-insert-bare-initial-color ()
+  "Insert accepts bare RGB as its first argument."
+  (with-temp-buffer
+    (let ((initial-hsv (emacs-canvas-color-picker--hex-to-hsv "DDEEFF")))
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+                 (lambda (state)
+                   (should (emacs-canvas-color-picker-test--close-to
+                            (emacs-canvas-color-picker--state-hue state) (nth 0 initial-hsv)))
+                   (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc"))))
+        (emacs-canvas-color-picker-insert "DDEEFF" 'css-rgba)
+        (should (equal (buffer-string) "#aabbccff"))))))
+
+(ert-deftest emacs-canvas-color-picker-test-copy-invalid-format-before-open ()
+  "An invalid output symbol fails without opening or changing the kill ring."
+  (dolist (format '(unsupported css-rgbb))
+    (with-temp-buffer
+      (insert "keep")
+      (let ((kill-ring '("original"))
+            (kill-ring-yank-pointer nil)
+            (opened 0))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker-read-color)
+                   (lambda (&rest _args) (setq opened (1+ opened)))))
+          (let ((failure (should-error (emacs-canvas-color-picker-copy "#112233" format))))
+            (should-not (eq (car failure) 'wrong-number-of-arguments)))
+          (should (= opened 0))
+          (should (equal kill-ring '("original")))
+          (should (equal (buffer-string) "keep")))))))
+
+(ert-deftest emacs-canvas-color-picker-test-insert-invalid-format-before-open ()
+  "An invalid output symbol fails before opening or changing the buffer."
+  (dolist (format '(unsupported css-rgbb))
+    (with-temp-buffer
+      (insert "keep")
+      (let ((kill-ring '("original"))
+            (kill-ring-yank-pointer nil)
+            (opened 0))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+                   (lambda (&rest _args) (setq opened (1+ opened)))))
+          (let ((failure (should-error (emacs-canvas-color-picker-insert "#112233" format))))
+            (should-not (eq (car failure) 'wrong-number-of-arguments)))
+          (should (= opened 0))
+          (should (equal kill-ring '("original")))
+          (should (equal (buffer-string) "keep")))))))
+
 (provide 'color-picker-test)
 
 ;;; color-picker-test.el ends here
