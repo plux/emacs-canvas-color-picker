@@ -14,11 +14,11 @@
 (require 'color-picker)
 
 (declare-function emacs-canvas-color-picker-native-render-base nil
-                  (canvas width height hue padding gap hue-width))
+                  (canvas width height hue padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-markers nil
-                  (canvas width height hue saturation value padding gap hue-width))
+                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-full nil
-                  (canvas width height hue saturation value padding gap hue-width initial-hue initial-saturation initial-value))
+                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value))
 
 (defvar emacs-canvas-color-picker-benchmark-sizes
   (or (getenv "COLOR_PICKER_BENCHMARK_SIZES") "64x64 128x128 256x256")
@@ -97,23 +97,27 @@
          (padding (emacs-canvas-color-picker--geometry-padding geometry))
          (gap (emacs-canvas-color-picker--geometry-gap geometry))
          (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry))
+         (swatch-width (emacs-canvas-color-picker--geometry-swatch-width geometry))
+         (swatch-height (emacs-canvas-color-picker--geometry-swatch-height geometry))
+         (swatch-gap (emacs-canvas-color-picker--geometry-swatch-gap geometry))
+         (marker-radius (emacs-canvas-color-picker--geometry-marker-radius geometry))
          (base-ms (emacs-canvas-color-picker-benchmark--time
                    emacs-canvas-color-picker-benchmark-base-iterations
                    (lambda ()
                      (if emacs-canvas-color-picker-benchmark-native
-                         (emacs-canvas-color-picker-native-render-base base-canvas canvas-width canvas-height 0.55 padding gap hue-width)
+                         (emacs-canvas-color-picker-native-render-base base-canvas canvas-width canvas-height 0.55 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius)
                        (emacs-canvas-color-picker--draw-base-palette base geometry 0.55)))))
          (marker-ms (emacs-canvas-color-picker-benchmark--time
                      emacs-canvas-color-picker-benchmark-iterations
                      (lambda ()
                        (if emacs-canvas-color-picker-benchmark-native
-                           (emacs-canvas-color-picker-native-render-markers canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width)
+                           (emacs-canvas-color-picker-native-render-markers canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius)
                          (emacs-canvas-color-picker--refresh-markers data base geometry 0.55 0.75 0.8)))))
          (full-ms (emacs-canvas-color-picker-benchmark--time
                    emacs-canvas-color-picker-benchmark-iterations
                    (lambda ()
                      (if emacs-canvas-color-picker-benchmark-native
-                         (emacs-canvas-color-picker-native-render-full canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width 0.55 0.75 0.8)
+                         (emacs-canvas-color-picker-native-render-full canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius 0.55 0.75 0.8)
                        (emacs-canvas-color-picker--draw-palette data geometry 0.55 0.75 0.8))))))
     (princ
      (format (concat "%s size=%dx%d canvas=%dx%d pixels=%d "

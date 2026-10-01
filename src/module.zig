@@ -6,10 +6,6 @@ export var plugin_is_GPL_compatible: c_int = 1;
 const background: u32 = 0xFF4D4D4D;
 const marker_black: u32 = 0xFF000000;
 const marker_white: u32 = 0xFFFFFFFF;
-const swatch_width: usize = 64;
-const swatch_height: usize = 28;
-const swatch_gap: usize = 16;
-
 fn nil(env: [*c]c.emacs_env) c.emacs_value {
     return env.*.intern.?(env, "nil");
 }
@@ -131,18 +127,30 @@ const Layout = struct {
     padding: usize,
     gap: usize,
     hue_width: usize,
+    swatch_width: usize,
+    swatch_height: usize,
+    swatch_gap: usize,
+    marker_radius: usize,
 };
 
 fn extractLayout(env: [*c]c.emacs_env, args: [*c]c.emacs_value, offset: usize) ?Layout {
     const padding_int = env.*.extract_integer.?(env, args[offset]);
     const gap_int = env.*.extract_integer.?(env, args[offset + 1]);
     const hue_width_int = env.*.extract_integer.?(env, args[offset + 2]);
+    const swatch_width_int = env.*.extract_integer.?(env, args[offset + 3]);
+    const swatch_height_int = env.*.extract_integer.?(env, args[offset + 4]);
+    const swatch_gap_int = env.*.extract_integer.?(env, args[offset + 5]);
+    const marker_radius_int = env.*.extract_integer.?(env, args[offset + 6]);
     if (env.*.non_local_exit_check.?(env) != c.emacs_funcall_exit_return) return null;
-    if (padding_int < 0 or gap_int < 0 or hue_width_int <= 0) return null;
+    if (padding_int < 0 or gap_int < 0 or hue_width_int <= 0 or swatch_width_int <= 0 or swatch_height_int <= 0 or swatch_gap_int < 0 or marker_radius_int <= 0) return null;
     return .{
         .padding = @intCast(padding_int),
         .gap = @intCast(gap_int),
         .hue_width = @intCast(hue_width_int),
+        .swatch_width = @intCast(swatch_width_int),
+        .swatch_height = @intCast(swatch_height_int),
+        .swatch_gap = @intCast(swatch_gap_int),
+        .marker_radius = @intCast(marker_radius_int),
     };
 }
 
@@ -153,12 +161,12 @@ fn renderBase(pixels: []u32, width: usize, height: usize, hue: f64, layout: Layo
     const padding = layout.padding;
     const gap = layout.gap;
     const hue_width = layout.hue_width;
-    if (width <= padding * 2 + gap + hue_width or height <= padding * 3 + swatch_height) return;
+    if (width <= padding * 2 + gap + hue_width or height <= padding * 3 + layout.swatch_height) return;
 
     const sv_left = padding;
     const sv_top = padding;
     const sv_width = width - padding * 2 - gap - hue_width;
-    const sv_height = height - padding * 3 - swatch_height;
+    const sv_height = height - padding * 3 - layout.swatch_height;
     const hue_left = sv_left + sv_width + gap;
     const hue_top = padding;
     const hue_height = sv_height;
@@ -198,12 +206,12 @@ fn renderMarkers(pixels: []u32, width: usize, height: usize, hue: f64, saturatio
     const padding = layout.padding;
     const gap = layout.gap;
     const hue_width = layout.hue_width;
-    if (width <= padding * 2 + gap + hue_width or height <= padding * 3 + swatch_height) return;
+    if (width <= padding * 2 + gap + hue_width or height <= padding * 3 + layout.swatch_height) return;
 
     const sv_left = padding;
     const sv_top = padding;
     const sv_width = width - padding * 2 - gap - hue_width;
-    const sv_height = height - padding * 3 - swatch_height;
+    const sv_height = height - padding * 3 - layout.swatch_height;
     const hue_left = sv_left + sv_width + gap;
     const hue_top = padding;
     const hue_height = sv_height;
@@ -214,8 +222,9 @@ fn renderMarkers(pixels: []u32, width: usize, height: usize, hue: f64, saturatio
     const sv_y = @as(isize, @intCast(sv_top)) + @as(isize, @intFromFloat(@round((1.0 - value) * @as(f64, @floatFromInt(@max(@as(usize, 1), sv_height) - 1)))));
     const hue_y = @as(isize, @intCast(hue_top)) + @as(isize, @intFromFloat(@round(clamp01(hue) * @as(f64, @floatFromInt(@max(@as(usize, 1), hue_height) - 1)))));
 
-    drawCircleOutline(pixels, width, height, sv_x, sv_y, 5, marker_black);
-    drawCircleOutline(pixels, width, height, sv_x, sv_y, 4, marker_white);
+    const radius: isize = @intCast(layout.marker_radius);
+    drawCircleOutline(pixels, width, height, sv_x, sv_y, radius, marker_black);
+    drawCircleOutline(pixels, width, height, sv_x, sv_y, @max(0, radius - 1), marker_white);
     drawHorizontalLine(pixels, width, height, @as(isize, @intCast(hue_left)) - 1, @as(isize, @intCast(hue_left + hue_width)), hue_y, marker_black);
     drawHorizontalLine(pixels, width, height, @as(isize, @intCast(hue_left)), @as(isize, @intCast(hue_left + hue_width)) - 1, hue_y, marker_white);
 }
@@ -224,14 +233,14 @@ fn renderSwatches(pixels: []u32, width: usize, height: usize, hue: f64, saturati
     if (width == 0 or height == 0) return;
 
     const padding = layout.padding;
-    if (height <= padding * 2 + swatch_height) return;
+    if (height <= padding * 2 + layout.swatch_height) return;
 
-    const swatch_top = height - padding - swatch_height;
+    const swatch_top = height - padding - layout.swatch_height;
     const new_swatch_left = padding;
-    const current_swatch_left = new_swatch_left + swatch_width + swatch_gap;
+    const current_swatch_left = new_swatch_left + layout.swatch_width + layout.swatch_gap;
 
-    fillRect(pixels, width, height, new_swatch_left, swatch_top, swatch_width, swatch_height, hsvToRgb(hue, saturation, value));
-    fillRect(pixels, width, height, current_swatch_left, swatch_top, swatch_width, swatch_height, hsvToRgb(initial_hue, initial_saturation, initial_value));
+    fillRect(pixels, width, height, new_swatch_left, swatch_top, layout.swatch_width, layout.swatch_height, hsvToRgb(hue, saturation, value));
+    fillRect(pixels, width, height, current_swatch_left, swatch_top, layout.swatch_width, layout.swatch_height, hsvToRgb(initial_hue, initial_saturation, initial_value));
 }
 
 fn extractCanvas(env: [*c]c.emacs_env, args: [*c]c.emacs_value, width_arg: usize, height_arg: usize) ?struct { pixels: []u32, width: usize, height: usize } {
@@ -285,9 +294,9 @@ fn nativeRenderFull(env: [*c]c.emacs_env, nargs: c.ptrdiff_t, args: [*c]c.emacs_
     const saturation = env.*.extract_float.?(env, args[4]);
     const value = env.*.extract_float.?(env, args[5]);
     const layout = extractLayout(env, args, 6) orelse return nil(env);
-    const initial_hue = env.*.extract_float.?(env, args[9]);
-    const initial_saturation = env.*.extract_float.?(env, args[10]);
-    const initial_value = env.*.extract_float.?(env, args[11]);
+    const initial_hue = env.*.extract_float.?(env, args[13]);
+    const initial_saturation = env.*.extract_float.?(env, args[14]);
+    const initial_value = env.*.extract_float.?(env, args[15]);
     if (env.*.non_local_exit_check.?(env) != c.emacs_funcall_exit_return) return nil(env);
     renderBase(canvas.pixels, canvas.width, canvas.height, hue, layout);
     renderMarkers(canvas.pixels, canvas.width, canvas.height, hue, saturation, value, layout);
@@ -304,13 +313,13 @@ export fn emacs_module_init(runtime: [*c]c.struct_emacs_runtime) c_int {
         return 2;
     }
 
-    const render_base_fn = env.*.make_function.?(env, 7, 7, nativeRenderBase, "Render the color picker base palette into a canvas.", null);
+    const render_base_fn = env.*.make_function.?(env, 11, 11, nativeRenderBase, "Render the color picker base palette into a canvas.", null);
     defalias(env, "emacs-canvas-color-picker-native-render-base", render_base_fn);
 
-    const render_markers_fn = env.*.make_function.?(env, 9, 9, nativeRenderMarkers, "Render color picker markers into a canvas.", null);
+    const render_markers_fn = env.*.make_function.?(env, 13, 13, nativeRenderMarkers, "Render color picker markers into a canvas.", null);
     defalias(env, "emacs-canvas-color-picker-native-render-markers", render_markers_fn);
 
-    const render_full_fn = env.*.make_function.?(env, 12, 12, nativeRenderFull, "Render the full color picker palette into a canvas.", null);
+    const render_full_fn = env.*.make_function.?(env, 16, 16, nativeRenderFull, "Render the full color picker palette into a canvas.", null);
     defalias(env, "emacs-canvas-color-picker-native-render-full", render_full_fn);
 
     return 0;

@@ -15,6 +15,10 @@
   "Default color used when no initial color is supplied."
   :type 'string)
 
+(defcustom emacs-canvas-color-picker-scale 1.0
+  "Scale the picker layout uniformly in canvas pixels."
+  :type 'number)
+
 (defcustom emacs-canvas-color-picker-native-module-file
   (expand-file-name "../zig-out/lib/libcolor-picker.so"
                     (file-name-directory (or load-file-name buffer-file-name default-directory)))
@@ -39,11 +43,11 @@
   "Non-nil when the native color picker renderer is loaded.")
 
 (declare-function emacs-canvas-color-picker-native-render-base nil
-                  (canvas width height hue padding gap hue-width))
+                  (canvas width height hue padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-markers nil
-                  (canvas width height hue saturation value padding gap hue-width))
+                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-full nil
-                  (canvas width height hue saturation value padding gap hue-width initial-hue initial-saturation initial-value))
+                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value))
 
 (defun emacs-canvas-color-picker--trace (event &rest properties)
   "Append trace EVENT with PROPERTIES when tracing is enabled."
@@ -80,6 +84,7 @@
   gap
   hue-width
   hue-height
+  marker-radius
   width
   height
   sv-left
@@ -220,51 +225,68 @@
           (emacs-canvas-color-picker--clamp-byte blue)))
 
 (defun emacs-canvas-color-picker--make-geometry (&optional plist)
-  "Return color picker geometry with optional overrides from PLIST."
-  (let* ((padding (or (plist-get plist :padding) 12))
-         (sv-width (or (plist-get plist :sv-width) 256))
-         (sv-height (or (plist-get plist :sv-height) 256))
-         (gap (or (plist-get plist :gap) 12))
-         (hue-width (or (plist-get plist :hue-width) 24))
-         (hue-height (or (plist-get plist :hue-height) sv-height))
-         (swatch-width (or (plist-get plist :swatch-width) 64))
-         (swatch-height (or (plist-get plist :swatch-height) 28))
-         (swatch-gap (or (plist-get plist :swatch-gap) 16))
-         (sv-left padding)
-         (sv-top padding)
-         (hue-left (+ sv-left sv-width gap))
-         (hue-top padding)
-         (palette-height (max sv-height hue-height))
-         (swatch-top (+ padding palette-height padding))
-         (new-swatch-left padding)
-         (current-swatch-left (+ new-swatch-left swatch-width swatch-gap))
-         (width (+ padding sv-width gap hue-width padding))
-         (height (+ padding palette-height padding swatch-height padding)))
-    (dolist (value (list padding sv-width sv-height gap hue-width hue-height swatch-width swatch-height swatch-gap))
-      (unless (and (integerp value) (>= value 0))
-        (error "Geometry values must be non-negative integers")))
-    (when (or (zerop sv-width) (zerop sv-height) (zerop hue-width) (zerop hue-height)
-              (zerop swatch-width) (zerop swatch-height))
-      (error "Palette dimensions must be positive"))
-    (emacs-canvas-color-picker--geometry-create
-     :padding padding
-     :sv-width sv-width
-     :sv-height sv-height
-     :gap gap
-     :hue-width hue-width
-     :hue-height hue-height
-     :width width
-     :height height
-     :sv-left sv-left
-     :sv-top sv-top
-     :hue-left hue-left
-     :hue-top hue-top
-     :swatch-top swatch-top
-     :swatch-width swatch-width
-     :swatch-height swatch-height
-     :swatch-gap swatch-gap
-     :new-swatch-left new-swatch-left
-     :current-swatch-left current-swatch-left)))
+  "Return color picker geometry with optional base pixel overrides from PLIST."
+  (let ((scale emacs-canvas-color-picker-scale))
+    (unless (and (or (integerp scale) (floatp scale)) (> scale 0)
+                 (not (isnan (float scale))) (< (float scale) 1.0e+INF))
+      (error "Picker scale must be a finite positive number"))
+    (let* ((base-padding (or (plist-get plist :padding) 12))
+           (base-sv-width (or (plist-get plist :sv-width) 256))
+           (base-sv-height (or (plist-get plist :sv-height) 256))
+           (base-gap (or (plist-get plist :gap) 12))
+           (base-hue-width (or (plist-get plist :hue-width) 24))
+           (base-hue-height (or (plist-get plist :hue-height) base-sv-height))
+           (base-swatch-width (or (plist-get plist :swatch-width) 64))
+           (base-swatch-height (or (plist-get plist :swatch-height) 28))
+           (base-swatch-gap (or (plist-get plist :swatch-gap) 16)))
+      (dolist (value (list base-padding base-sv-width base-sv-height base-gap
+                           base-hue-width base-hue-height base-swatch-width
+                           base-swatch-height base-swatch-gap))
+        (unless (and (integerp value) (>= value 0))
+          (error "Geometry values must be non-negative integers")))
+      (let* ((padding (round (* base-padding scale)))
+             (sv-width (round (* base-sv-width scale)))
+             (sv-height (round (* base-sv-height scale)))
+             (gap (round (* base-gap scale)))
+             (hue-width (round (* base-hue-width scale)))
+             (hue-height (round (* base-hue-height scale)))
+             (swatch-width (round (* base-swatch-width scale)))
+             (swatch-height (round (* base-swatch-height scale)))
+             (swatch-gap (round (* base-swatch-gap scale)))
+             (marker-radius (max 1 (round (* 5 scale))))
+             (sv-left padding)
+             (sv-top padding)
+             (hue-left (+ sv-left sv-width gap))
+             (hue-top padding)
+             (palette-height (max sv-height hue-height))
+             (swatch-top (+ padding palette-height padding))
+             (new-swatch-left padding)
+             (current-swatch-left (+ new-swatch-left swatch-width swatch-gap))
+             (width (+ padding sv-width gap hue-width padding))
+             (height (+ padding palette-height padding swatch-height padding)))
+        (when (or (zerop sv-width) (zerop sv-height) (zerop hue-width) (zerop hue-height)
+                  (zerop swatch-width) (zerop swatch-height))
+          (error "Palette dimensions must be positive"))
+        (emacs-canvas-color-picker--geometry-create
+         :padding padding
+         :sv-width sv-width
+         :sv-height sv-height
+         :gap gap
+         :hue-width hue-width
+         :hue-height hue-height
+         :marker-radius marker-radius
+         :width width
+         :height height
+         :sv-left sv-left
+         :sv-top sv-top
+         :hue-left hue-left
+         :hue-top hue-top
+         :swatch-top swatch-top
+         :swatch-width swatch-width
+         :swatch-height swatch-height
+         :swatch-gap swatch-gap
+         :new-swatch-left new-swatch-left
+         :current-swatch-left current-swatch-left)))))
 
 (defun emacs-canvas-color-picker--within-rect-p (x y left top width height)
   "Return non-nil when X and Y are inside rectangle LEFT TOP WIDTH HEIGHT."
@@ -396,14 +418,15 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
          (hue-top (emacs-canvas-color-picker--geometry-hue-top geometry))
          (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry))
          (hue-height (emacs-canvas-color-picker--geometry-hue-height geometry))
+         (radius (or (emacs-canvas-color-picker--geometry-marker-radius geometry) 5))
          (s (emacs-canvas-color-picker--clamp01 saturation))
          (v (emacs-canvas-color-picker--clamp01 value))
          (h (mod (float hue) 1.0))
          (sv-x (+ sv-left (round (* s (max 0 (1- sv-width))))))
          (sv-y (+ sv-top (round (* (- 1.0 v) (max 0 (1- sv-height))))))
          (hue-y (+ hue-top (round (* h (max 0 (1- hue-height)))))))
-    (emacs-canvas-color-picker--draw-circle-outline data geometry sv-x sv-y 5 emacs-canvas-color-picker--marker-black)
-    (emacs-canvas-color-picker--draw-circle-outline data geometry sv-x sv-y 4 emacs-canvas-color-picker--marker-white)
+    (emacs-canvas-color-picker--draw-circle-outline data geometry sv-x sv-y radius emacs-canvas-color-picker--marker-black)
+    (emacs-canvas-color-picker--draw-circle-outline data geometry sv-x sv-y (max 0 (1- radius)) emacs-canvas-color-picker--marker-white)
     (emacs-canvas-color-picker--draw-horizontal-line
      data geometry (1- hue-left) (+ hue-left hue-width) hue-y emacs-canvas-color-picker--marker-black)
     (emacs-canvas-color-picker--draw-horizontal-line
@@ -493,6 +516,10 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
         (emacs-canvas-color-picker--geometry-padding geometry)
         (emacs-canvas-color-picker--geometry-gap geometry)
         (emacs-canvas-color-picker--geometry-hue-width geometry)
+        (emacs-canvas-color-picker--geometry-swatch-width geometry)
+        (emacs-canvas-color-picker--geometry-swatch-height geometry)
+        (emacs-canvas-color-picker--geometry-swatch-gap geometry)
+        (emacs-canvas-color-picker--geometry-marker-radius geometry)
         (float (or initial-hue hue))
         (float (or initial-saturation saturation))
         (float (or initial-value value)))))
@@ -564,11 +591,16 @@ native module. Otherwise use the pure Elisp renderer."
            (canvas (emacs-canvas-color-picker--state-canvas state))
            (padding (emacs-canvas-color-picker--geometry-padding geometry))
            (gap (emacs-canvas-color-picker--geometry-gap geometry))
-           (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry)))
+           (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry))
+           (swatch-width (emacs-canvas-color-picker--geometry-swatch-width geometry))
+           (swatch-height (emacs-canvas-color-picker--geometry-swatch-height geometry))
+           (swatch-gap (emacs-canvas-color-picker--geometry-swatch-gap geometry))
+           (marker-radius (emacs-canvas-color-picker--geometry-marker-radius geometry)))
       (when rebuild-base
-        (emacs-canvas-color-picker-native-render-base base-canvas width height hue padding gap hue-width))
+        (emacs-canvas-color-picker-native-render-base
+         base-canvas width height hue padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
       (emacs-canvas-color-picker-native-render-full
-       canvas width height hue saturation value padding gap hue-width
+       canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius
        (float (or (emacs-canvas-color-picker--state-initial-hue state) hue))
        (float (or (emacs-canvas-color-picker--state-initial-saturation state) saturation))
        (float (or (emacs-canvas-color-picker--state-initial-value state) value))))))
