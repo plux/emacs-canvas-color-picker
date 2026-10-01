@@ -387,7 +387,41 @@
     (cl-letf (((symbol-function 'frame-char-height) (lambda (&optional _frame) 17)))
       (let ((size (emacs-canvas-color-picker--frame-size geometry nil)))
         (should (= (car size) (emacs-canvas-color-picker--geometry-width geometry)))
-        (should (= (cdr size) (+ (emacs-canvas-color-picker--geometry-height geometry) 17)))))))
+        (should (= (cdr size) (+ (emacs-canvas-color-picker--geometry-height geometry) 17 1)))))))
+
+(ert-deftest emacs-canvas-color-picker-test-setup-buffer-keeps-status-at-point ()
+  "The window must not scroll past the status row to show point."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer)
+                  :canvas '(image :type canvas :id test)
+                  :hue 0.0 :saturation 1.0 :value 1.0)))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (should (= (point) (point-min))))))
+
+(ert-deftest emacs-canvas-color-picker-test-child-frame-shows-status-and-canvas ()
+  "The child frame must display the status row and the entire canvas."
+  (skip-unless (and (display-graphic-p) (image-type-available-p 'canvas)))
+  (let ((state (emacs-canvas-color-picker-read-color #'ignore)))
+    (unwind-protect
+        (let* ((window (frame-root-window (emacs-canvas-color-picker--state-frame state)))
+               (geometry (emacs-canvas-color-picker--state-geometry state)))
+          (redisplay t)
+          (should (= (window-start window) (with-current-buffer (window-buffer window) (point-min))))
+          (should (pos-visible-in-window-p (window-start window) window))
+          (should (>= (window-pixel-height window)
+                      (+ (frame-char-height (window-frame window))
+                         (emacs-canvas-color-picker--geometry-height geometry))))
+          (let* ((position (posn-at-x-y 50 100 window t))
+                 (pixel (posn-x-y position))
+                 (edges (window-inside-pixel-edges window)))
+            (cl-letf (((symbol-function 'mouse-pixel-position)
+                       (lambda () (cons (window-frame window)
+                                        (cons (+ (car pixel) (nth 0 edges))
+                                              (+ (cdr pixel) (nth 1 edges)))))))
+              (should (equal (emacs-canvas-color-picker--current-pointer-coordinates window)
+                             (posn-object-x-y position))))))
+      (emacs-canvas-color-picker--cancel state))))
 
 (ert-deftest emacs-canvas-color-picker-test-set-window-minimal-fringes ()
   "Picker window uses minimal fringes without changing frame size."

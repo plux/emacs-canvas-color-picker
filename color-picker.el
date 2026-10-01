@@ -845,6 +845,7 @@ Return the current coordinates when they are available."
           (setf (emacs-canvas-color-picker--state-status-marker state)
                 (copy-marker status-start nil)))
         (insert (emacs-canvas-color-picker--display-string canvas))
+        (goto-char (point-min))
         (setq buffer-read-only t)
         (set-buffer-modified-p nil)))))
 
@@ -852,7 +853,9 @@ Return the current coordinates when they are available."
   "Return child-frame pixel size for GEOMETRY and PARENT-FRAME."
   (cons (emacs-canvas-color-picker--geometry-width geometry)
         (+ (emacs-canvas-color-picker--geometry-height geometry)
-           (frame-char-height parent-frame))))
+           (frame-char-height parent-frame)
+           ;; The child frame can be one pixel shorter than its requested height.
+           1)))
 
 (defun emacs-canvas-color-picker--frame-position (parent width height)
   "Return a child-frame position inside PARENT for WIDTH and HEIGHT."
