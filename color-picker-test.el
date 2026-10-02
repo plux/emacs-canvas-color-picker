@@ -435,10 +435,10 @@
                    (push (apply #'format format-string args) messages))))
         (emacs-canvas-color-picker--setup-buffer state)
         (emacs-canvas-color-picker--update-status state)
-        (should (equal (car messages) "#xffff0000    RET accept, q cancel"))
+        (should (equal (car messages) "#xffff0000"))
         (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
         (emacs-canvas-color-picker--update-status state)
-        (should (equal (car messages) "#xff00ff00    RET accept, q cancel"))
+        (should (equal (car messages) "#xff00ff00"))
         (should (equal (buffer-string) " "))))))
 
 (ert-deftest emacs-canvas-color-picker-test-format-preview-copy-and-insert ()
@@ -509,8 +509,38 @@
       (should (equal (buffer-string) " "))
       (should (eq (get-text-property (point-min) 'display) (emacs-canvas-color-picker--state-canvas state))))))
 
+(ert-deftest emacs-canvas-color-picker-test-echo-hints-only-at-startup ()
+  "Opening shows the hint once; later updates show only the formatted color."
+  (let ((messages nil)
+        (state (emacs-canvas-color-picker--state-create
+                :hue 0.0 :saturation 1.0 :value 1.0 :output-format 'emacs-rgb)))
+    (cl-letf (((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (emacs-canvas-color-picker--update-status state t)
+      (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
+      (emacs-canvas-color-picker--update-status state)
+      (should (equal (reverse messages)
+                     '("#xff0000    RET accept, q cancel" "#x00ff00"))))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-inline-update-does-not-repeat-hints ()
+  "Inline preview updates do not replace the initial hint in the echo area."
+  (let ((messages nil)
+        (state (emacs-canvas-color-picker--state-create
+                :hue 0.0 :saturation 1.0 :value 1.0)))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--update-preview) #'ignore)
+              ((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (emacs-canvas-color-picker--update-status state t)
+      (cl-letf (((symbol-function 'overlay-buffer) (lambda (_overlay) t))
+                ((symbol-function 'overlayp) (lambda (_overlay) t)))
+        (setf (emacs-canvas-color-picker--state-preview-overlay state) 'preview)
+        (emacs-canvas-color-picker--update-status state))
+      (should (equal messages '("#ff0000    RET accept, q cancel"))))))
+
 (ert-deftest emacs-canvas-color-picker-test-echo-updates-format-and-hints ()
-  "The echo area shows formatted color and hints without a source overlay."
+  "The echo area shows formatted color without repeated hints."
   (let ((messages nil)
         (state (emacs-canvas-color-picker--state-create
                 :hue 0.0 :saturation 1.0 :value 1.0 :output-format 'emacs-rgb)))
@@ -518,10 +548,10 @@
                (lambda (format-string &rest args)
                  (push (apply #'format format-string args) messages))))
       (emacs-canvas-color-picker--update-status state)
-      (should (equal (car messages) "#xff0000    RET accept, q cancel"))
+      (should (equal (car messages) "#xff0000"))
       (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
       (emacs-canvas-color-picker--update-status state)
-      (should (equal (car messages) "#x00ff00    RET accept, q cancel")))))
+      (should (equal (car messages) "#x00ff00")))))
 
 (ert-deftest emacs-canvas-color-picker-test-echo-inline-preview-shows-hints ()
   "An active inline preview leaves only key hints in the echo area."
@@ -639,7 +669,7 @@
         (should (= (emacs-canvas-color-picker--state-saturation state) 0.5))))))
 
 (ert-deftest emacs-canvas-color-picker-test-keyboard-hue-horizontal-no-op ()
-  "Horizontal keys leave hue unchanged and show an echo hint."
+  "Horizontal keys leave hue unchanged without a message."
   (with-temp-buffer
     (let ((state (emacs-canvas-color-picker--state-create
                   :buffer (current-buffer) :canvas '(image :type canvas :id test)
@@ -653,7 +683,7 @@
         (dolist (key '("b" "<left>" "C-f" "C-<right>"))
           (call-interactively (key-binding (kbd key)))
           (should (= (emacs-canvas-color-picker--state-hue state) 0.3))
-          (should (string-match-p "hue" (car messages))))))))
+          (should-not messages))))))
 
 (ert-deftest emacs-canvas-color-picker-test-keyboard-sv-clamps ()
   "Value and saturation stop at their boundaries."

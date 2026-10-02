@@ -650,19 +650,22 @@ native module. Otherwise use the pure Elisp renderer."
           (delete-overlay overlay)
           (setf (emacs-canvas-color-picker--state-preview-overlay state) nil))))))
 
-(defun emacs-canvas-color-picker--status-text (state)
-  "Return status text for STATE."
+(defun emacs-canvas-color-picker--status-text (state &optional color-only)
+  "Return status text for STATE, without hints when COLOR-ONLY is non-nil."
   (if (and (overlayp (emacs-canvas-color-picker--state-preview-overlay state))
            (overlay-buffer (emacs-canvas-color-picker--state-preview-overlay state)))
-      "RET accept, q cancel"
-    (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--output-text state))))
+      (unless color-only "RET accept, q cancel")
+    (if color-only
+        (emacs-canvas-color-picker--output-text state)
+      (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--output-text state)))))
 
-(defun emacs-canvas-color-picker--update-status (state)
-  "Show STATE's color and key hints in the parent frame's echo area."
+(defun emacs-canvas-color-picker--update-status (state &optional startup)
+  "Show STATE's color in the echo area; include key hints at STARTUP."
   (emacs-canvas-color-picker--update-preview state)
-  (let ((parent (emacs-canvas-color-picker--state-parent-frame state)))
-    (with-selected-frame (if (frame-live-p parent) parent (selected-frame))
-      (message "%s" (emacs-canvas-color-picker--status-text state)))))
+  (when-let* ((text (emacs-canvas-color-picker--status-text state (not startup))))
+    (let ((parent (emacs-canvas-color-picker--state-parent-frame state)))
+      (with-selected-frame (if (frame-live-p parent) parent (selected-frame))
+        (message "%s" text)))))
 
 (defun emacs-canvas-color-picker--native-refresh (state rebuild-base)
   "Refresh STATE through native rendering when possible."
@@ -736,15 +739,13 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
             (step (if large 0.1 0.01)))
         (cond
          ((eq region 'hue)
-          (if (memq direction '(up down))
-              (progn
-                (setf (emacs-canvas-color-picker--state-hue state)
-                      (mod (+ (emacs-canvas-color-picker--state-hue state)
-                              (* (if (eq direction 'up) -1.0 1.0)
-                                 (/ (if large 15.0 1.0) 360.0))) 1.0))
-                (emacs-canvas-color-picker--refresh state t)
-                (emacs-canvas-color-picker--update-status state))
-            (message "Hue strip: use Up/Down to adjust hue, TAB for saturation/value")))
+          (when (memq direction '(up down))
+            (setf (emacs-canvas-color-picker--state-hue state)
+                  (mod (+ (emacs-canvas-color-picker--state-hue state)
+                          (* (if (eq direction 'up) -1.0 1.0)
+                             (/ (if large 15.0 1.0) 360.0))) 1.0))
+            (emacs-canvas-color-picker--refresh state t)
+            (emacs-canvas-color-picker--update-status state)))
          (t
           (pcase direction
             ('up (setf (emacs-canvas-color-picker--state-value state)
@@ -1208,7 +1209,7 @@ Return the current coordinates when they are available."
         (if (eq (emacs-canvas-color-picker--state-display state) 'buffer)
             (emacs-canvas-color-picker--make-window state)
           (emacs-canvas-color-picker--make-frame state))
-        (emacs-canvas-color-picker--update-status state)
+        (emacs-canvas-color-picker--update-status state t)
         state)
     (error
      (emacs-canvas-color-picker--cleanup state)
