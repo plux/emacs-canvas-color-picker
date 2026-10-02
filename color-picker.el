@@ -20,6 +20,10 @@
 The picker keeps its layout proportions at other scale values."
   :type 'number)
 
+(defcustom emacs-canvas-color-picker-display 'child-frame
+  "Display the picker in a child frame or an Emacs buffer window."
+  :type '(choice (const child-frame) (const buffer)))
+
 (defcustom emacs-canvas-color-picker-native-module-file
   (expand-file-name "../zig-out/lib/libcolor-picker.so"
                     (file-name-directory (or load-file-name buffer-file-name default-directory)))
@@ -104,6 +108,10 @@ The picker keeps its layout proportions at other scale values."
   frame
   parent-frame
   parent-window
+  display
+  window
+  previous-buffer
+  created-window
   buffer
   canvas
   base-canvas
@@ -125,6 +133,9 @@ The picker keeps its layout proportions at other scale values."
 
 (defvar-local emacs-canvas-color-picker--state nil
   "Current color picker state for this buffer.")
+
+(defvar emacs-canvas-color-picker--active-state nil
+  "Picker state currently open in a frame or window.")
 
 (defvar emacs-canvas-color-picker--mouse-map
   (let ((map (make-sparse-keymap)))
@@ -732,7 +743,14 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
                ((and (consp position) (numberp (cdr position))) (cdr position))
                ((and (consp position) (numberp (cadr position))) (cadr position))
                (t (caddr mouse))))
-           (edges (window-inside-pixel-edges window))
+           (state (and (windowp window)
+                       (buffer-local-value 'emacs-canvas-color-picker--state
+                                           (window-buffer window))))
+           (edges (if (and state
+                           (eq (emacs-canvas-color-picker--state-display state) 'buffer)
+                           (fboundp 'window-body-pixel-edges))
+                      (window-body-pixel-edges window)
+                    (window-inside-pixel-edges window)))
            (left (nth 0 edges))
            (top (nth 1 edges))
            (coordinates (when (and (or (not frame) (eq frame (window-frame window)))
@@ -787,14 +805,27 @@ Return the current coordinates when they are available."
       (emacs-canvas-color-picker--cleanup state))))
 
 (defun emacs-canvas-color-picker--cleanup (state)
-  "Delete frame and buffer resources for STATE."
+  "Release the frame or window and buffer owned by STATE."
   (let ((frame (emacs-canvas-color-picker--state-frame state))
+        (window (emacs-canvas-color-picker--state-window state))
         (buffer (emacs-canvas-color-picker--state-buffer state)))
+    (when (eq (emacs-canvas-color-picker--state-display state) 'buffer)
+      (remove-hook 'window-size-change-functions #'emacs-canvas-color-picker--window-resized))
     (when (frame-live-p frame)
       (delete-frame frame t))
+    (when (and (window-live-p window) (eq (window-buffer window) buffer))
+      (if (and (emacs-canvas-color-picker--state-created-window state)
+               (not (one-window-p t (window-frame window))))
+          (delete-window window)
+        (when (buffer-live-p (emacs-canvas-color-picker--state-previous-buffer state))
+          (set-window-buffer window (emacs-canvas-color-picker--state-previous-buffer state)))))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (setq emacs-canvas-color-picker--state nil)))))
+        (setq emacs-canvas-color-picker--state nil))
+      (when (eq (emacs-canvas-color-picker--state-display state) 'buffer)
+        (kill-buffer buffer)))
+    (when (eq emacs-canvas-color-picker--active-state state)
+      (setq emacs-canvas-color-picker--active-state nil))))
 
 (defun emacs-canvas-color-picker--mouse-click (event)
   "Handle single click EVENT."
@@ -968,6 +999,80 @@ Return the current coordinates when they are available."
     (emacs-canvas-color-picker--focus-frame frame)
     frame))
 
+(defun emacs-canvas-color-picker--fit-window (state)
+  "Fit STATE's canvas inside its window while preserving its HSV values."
+  (let* ((window (emacs-canvas-color-picker--state-window state))
+         (width (window-body-width window t))
+         (height (- (window-body-height window t)
+                    (emacs-canvas-color-picker--status-pixel-height window)))
+         (low 0.1)
+         (high (max low (min (/ (float width) 316.0)
+                             (/ (float height) 320.0))))
+         geometry)
+    (cl-labels ((fits (scale)
+                  (let* ((emacs-canvas-color-picker-scale scale)
+                         (candidate (emacs-canvas-color-picker--make-geometry)))
+                    (when (and (<= (emacs-canvas-color-picker--geometry-width candidate) width)
+                               (<= (emacs-canvas-color-picker--geometry-height candidate) height))
+                      candidate))))
+      (unless (and (>= high low) (setq geometry (fits low)))
+        (user-error "Window is too small for the color picker"))
+      (if-let* ((full (fits high)))
+          (setq geometry full)
+        (dotimes (_ 24)
+          (let* ((middle (/ (+ low high) 2.0))
+                 (candidate (fits middle)))
+            (if candidate
+                (setq low middle geometry candidate)
+              (setq high middle))))))
+    (unless (equal geometry (emacs-canvas-color-picker--state-geometry state))
+      (let* ((size (* (emacs-canvas-color-picker--geometry-width geometry)
+                      (emacs-canvas-color-picker--geometry-height geometry)))
+             (data (make-vector size emacs-canvas-color-picker--background))
+             (base-data (make-vector size emacs-canvas-color-picker--background)))
+        (setf (emacs-canvas-color-picker--state-geometry state) geometry
+              (emacs-canvas-color-picker--state-data state) data
+              (emacs-canvas-color-picker--state-base-data state) base-data
+              (emacs-canvas-color-picker--state-canvas state)
+              (emacs-canvas-color-picker--make-canvas geometry data)
+              (emacs-canvas-color-picker--state-base-canvas state)
+              (emacs-canvas-color-picker--make-canvas geometry base-data))
+        (emacs-canvas-color-picker--refresh state t)
+        (emacs-canvas-color-picker--setup-buffer state)))))
+
+(defun emacs-canvas-color-picker--window-resized (&rest _args)
+  "Refit the open buffer picker after its window changes size."
+  (let ((state emacs-canvas-color-picker--active-state))
+    (when (and state (eq (emacs-canvas-color-picker--state-display state) 'buffer)
+               (not (emacs-canvas-color-picker--state-done state)))
+      (let ((window (emacs-canvas-color-picker--state-window state)))
+        (if (and (window-live-p window)
+                 (eq (window-buffer window) (emacs-canvas-color-picker--state-buffer state)))
+            (condition-case nil
+                (emacs-canvas-color-picker--fit-window state)
+              (user-error (emacs-canvas-color-picker--cancel state)))
+          (emacs-canvas-color-picker--cancel state))))))
+
+(defun emacs-canvas-color-picker--make-window (state)
+  "Display STATE through Emacs window rules and select its window."
+  (let ((previous nil)
+        (buffer (emacs-canvas-color-picker--state-buffer state)))
+    (walk-windows (lambda (window)
+                    (push (cons window (window-buffer window)) previous))
+                  nil t)
+    (let ((window (display-buffer buffer)))
+      (unless (window-live-p window)
+        (error "No window available for the color picker"))
+      (setf (emacs-canvas-color-picker--state-window state) window
+            (emacs-canvas-color-picker--state-created-window state)
+            (not (assq window previous))
+            (emacs-canvas-color-picker--state-previous-buffer state)
+            (cdr (assq window previous)))
+      (select-window window)
+      (emacs-canvas-color-picker--fit-window state)
+      (add-hook 'window-size-change-functions #'emacs-canvas-color-picker--window-resized)
+      window)))
+
 (defun emacs-canvas-color-picker--ensure-canvas-available ()
   "Signal a user error unless canvas images are available."
   (unless (and (display-graphic-p) (image-type-available-p 'canvas))
@@ -975,16 +1080,35 @@ Return the current coordinates when they are available."
 
 (defun emacs-canvas-color-picker--open-state (state)
   "Open the color picker for STATE."
-  (emacs-canvas-color-picker--ensure-canvas-available)
-  (emacs-canvas-color-picker--refresh state t)
-  (emacs-canvas-color-picker--setup-buffer state)
-  (emacs-canvas-color-picker--make-frame state)
-  state)
+  (when (and emacs-canvas-color-picker--active-state
+             (not (emacs-canvas-color-picker--state-done
+                   emacs-canvas-color-picker--active-state)))
+    (user-error "A color picker is already open"))
+  (setq emacs-canvas-color-picker--active-state state)
+  (condition-case err
+      (progn
+        (emacs-canvas-color-picker--ensure-canvas-available)
+        (emacs-canvas-color-picker--refresh state t)
+        (emacs-canvas-color-picker--setup-buffer state)
+        (if (eq (emacs-canvas-color-picker--state-display state) 'buffer)
+            (emacs-canvas-color-picker--make-window state)
+          (emacs-canvas-color-picker--make-frame state))
+        state)
+    (error
+     (emacs-canvas-color-picker--cleanup state)
+     (signal (car err) (cdr err)))))
 
-(defun emacs-canvas-color-picker--make-state (callback &optional initial-color buffer)
+(defun emacs-canvas-color-picker--make-state (callback &optional initial-color buffer display)
   "Return a new picker state for CALLBACK and INITIAL-COLOR."
   (unless (functionp callback)
     (error "Callback must be callable"))
+  (when (and emacs-canvas-color-picker--active-state
+             (not (emacs-canvas-color-picker--state-done
+                   emacs-canvas-color-picker--active-state)))
+    (user-error "A color picker is already open"))
+  (setq display (or display emacs-canvas-color-picker-display))
+  (unless (memq display '(buffer child-frame))
+    (error "Unsupported color picker display: %S" display))
   (let* ((hsv (emacs-canvas-color-picker--initial-hsv initial-color))
          (parent-frame (selected-frame))
          (parent-window (selected-window))
@@ -995,10 +1119,14 @@ Return the current coordinates when they are available."
          (base-data (make-vector (length data) emacs-canvas-color-picker--background))
          (canvas (emacs-canvas-color-picker--make-canvas geometry data))
          (base-canvas (emacs-canvas-color-picker--make-canvas geometry base-data))
-         (buffer (or buffer (get-buffer-create emacs-canvas-color-picker--buffer-name))))
+         (buffer (or buffer
+                     (if (eq display 'buffer)
+                         (generate-new-buffer emacs-canvas-color-picker--buffer-name)
+                       (get-buffer-create emacs-canvas-color-picker--buffer-name)))))
     (emacs-canvas-color-picker--state-create
      :parent-frame parent-frame
      :parent-window parent-window
+     :display display
      :buffer buffer
      :canvas canvas
      :base-canvas base-canvas
@@ -1015,12 +1143,13 @@ Return the current coordinates when they are available."
      :done nil)))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-read-color (callback &optional initial-color)
+(defun emacs-canvas-color-picker-read-color (callback &optional initial-color display)
   "Open a canvas color picker and call CALLBACK with the selected color.
 
-INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
+INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
   (emacs-canvas-color-picker--open-state
-   (emacs-canvas-color-picker--make-state callback initial-color)))
+   (emacs-canvas-color-picker--make-state callback initial-color nil display)))
 
 (defun emacs-canvas-color-picker--hex-token-char-p (char)
   "Return non-nil when CHAR belongs to an alphanumeric token."
@@ -1090,7 +1219,7 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
       ('c-rgb (concat "0x" rgb))
       (_ (error "Unsupported color output format: %S" format)))))
 
-(defun emacs-canvas-color-picker--make-insert-state (target-buffer &optional initial-color output-format)
+(defun emacs-canvas-color-picker--make-insert-state (target-buffer &optional initial-color output-format display)
   "Return insert-only picker state for TARGET-BUFFER."
   (let ((marker (copy-marker (point) t)))
     (emacs-canvas-color-picker--make-state
@@ -1101,9 +1230,9 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
              (goto-char marker)
              (insert (emacs-canvas-color-picker--format-hex hex output-format)))))
        (set-marker marker nil))
-     initial-color)))
+     initial-color nil display)))
 
-(defun emacs-canvas-color-picker--make-at-point-state (target-buffer)
+(defun emacs-canvas-color-picker--make-at-point-state (target-buffer &optional display)
   "Return at-point picker state for TARGET-BUFFER."
   (let* ((match (emacs-canvas-color-picker--hex-at-point-bounds))
          (initial-color (and match (plist-get match :rgb)))
@@ -1123,7 +1252,7 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
                            (goto-char insert-marker)
                            (insert hex)))))
                    (set-marker insert-marker nil))
-                 initial-color)))
+                 initial-color nil display)))
     (when match
       (setf (emacs-canvas-color-picker--state-replace-start state) (plist-get match :start)
             (emacs-canvas-color-picker--state-replace-end state) (plist-get match :end)
@@ -1131,12 +1260,13 @@ INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form."
     state))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-copy (&optional initial-color output-format)
+(defun emacs-canvas-color-picker-copy (&optional initial-color output-format display)
   "Open the color picker and copy the selected hex color.
 
 INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
 OUTPUT-FORMAT selects `css-rgb', `css-rgba', `emacs-argb',
-`emacs-rgb', or `c-rgb'; nil uses `css-rgb'."
+`emacs-rgb', or `c-rgb'; nil uses `css-rgb'.
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
   (interactive)
   (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker-read-color
@@ -1144,27 +1274,30 @@ OUTPUT-FORMAT selects `css-rgb', `css-rgba', `emacs-argb',
      (let ((formatted (emacs-canvas-color-picker--format-hex hex output-format)))
        (kill-new formatted)
        (message "Copied color %s" formatted)))
-   initial-color))
+   initial-color display))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-insert (&optional initial-color output-format)
+(defun emacs-canvas-color-picker-insert (&optional initial-color output-format display)
   "Open the color picker and insert the selected hex color at point.
 
 INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
 OUTPUT-FORMAT selects `css-rgb', `css-rgba', `emacs-argb',
-`emacs-rgb', or `c-rgb'; nil uses `css-rgb'."
+`emacs-rgb', or `c-rgb'; nil uses `css-rgb'.
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
   (interactive)
   (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker--open-state
    (emacs-canvas-color-picker--make-insert-state
-    (current-buffer) initial-color output-format)))
+    (current-buffer) initial-color output-format display)))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-at-point ()
-  "Open the color picker and replace a hex color at point when present."
+(defun emacs-canvas-color-picker-at-point (&optional display)
+  "Open the color picker and replace a hex color at point when present.
+
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
   (interactive)
   (emacs-canvas-color-picker--open-state
-   (emacs-canvas-color-picker--make-at-point-state (current-buffer))))
+   (emacs-canvas-color-picker--make-at-point-state (current-buffer) display)))
 
 (provide 'color-picker)
 
