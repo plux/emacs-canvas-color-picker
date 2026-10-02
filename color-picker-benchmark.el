@@ -18,7 +18,7 @@
 (declare-function emacs-canvas-color-picker-native-render-markers nil
                   (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-full nil
-                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value))
+                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value focus-region))
 
 (defvar emacs-canvas-color-picker-benchmark-sizes
   (or (getenv "COLOR_PICKER_BENCHMARK_SIZES") "64x64 128x128 256x256")
@@ -117,7 +117,7 @@
                    emacs-canvas-color-picker-benchmark-iterations
                    (lambda ()
                      (if emacs-canvas-color-picker-benchmark-native
-                         (emacs-canvas-color-picker-native-render-full canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius 0.55 0.75 0.8)
+                         (emacs-canvas-color-picker-native-render-full canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius 0.55 0.75 0.8 0)
                        (emacs-canvas-color-picker--draw-palette data geometry 0.55 0.75 0.8))))))
     (princ
      (format (concat "%s size=%dx%d canvas=%dx%d pixels=%d "

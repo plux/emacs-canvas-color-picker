@@ -166,7 +166,8 @@
                            (emacs-canvas-color-picker--geometry-marker-radius geometry)
                            0.5
                            0.25
-                           0.75))))))
+                           0.75
+                           0))))))
 
 (ert-deftest emacs-canvas-color-picker-test-native-refresh-does-not-reload-elisp-data ()
   "Native canvas writes refresh without reloading stale Elisp data."
@@ -596,6 +597,100 @@
         :hue 0.0 :saturation 1.0 :value 1.0))
       (should (eq (key-binding (kbd "RET")) #'emacs-canvas-color-picker--accept))
       (should (eq (key-binding (kbd "q")) #'emacs-canvas-color-picker--cancel)))))
+
+(ert-deftest emacs-canvas-color-picker-test-keyboard-navigation-square ()
+  "Keyboard movement uses fixed fine and coarse HSV steps in the square."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer) :canvas '(image :type canvas :id test)
+                  :hue 0.5 :saturation 0.5 :value 0.5)))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--update-status) #'ignore))
+        (should (eq (emacs-canvas-color-picker--state-active-region state) 'sv))
+        (call-interactively (key-binding (kbd "p")))
+        (should (emacs-canvas-color-picker-test--close-to
+                 (emacs-canvas-color-picker--state-value state) 0.51))
+        (call-interactively (key-binding (kbd "C-f")))
+        (should (emacs-canvas-color-picker-test--close-to
+                 (emacs-canvas-color-picker--state-saturation state) 0.6))
+        (call-interactively (key-binding (kbd "TAB")))
+        (should (eq (emacs-canvas-color-picker--state-active-region state) 'hue))
+        (should (emacs-canvas-color-picker-test--close-to
+                 (emacs-canvas-color-picker--state-hue state) 0.5))))))
+
+(ert-deftest emacs-canvas-color-picker-test-keyboard-hue-wrap-and-tab ()
+  "Hue movement wraps, and TAB changes regions without changing HSV."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer) :canvas '(image :type canvas :id test)
+                  :hue 0.0 :saturation 0.5 :value 0.5)))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--update-status) #'ignore))
+        (call-interactively (key-binding (kbd "M-p")))
+        (should (emacs-canvas-color-picker-test--close-to
+                 (emacs-canvas-color-picker--state-hue state) (/ 359.0 360.0)))
+        (call-interactively (key-binding (kbd "TAB")))
+        (should (eq (emacs-canvas-color-picker--state-active-region state) 'hue))
+        (call-interactively (key-binding (kbd "C-<down>")))
+        (should (emacs-canvas-color-picker-test--close-to
+                 (emacs-canvas-color-picker--state-hue state) (/ 14.0 360.0)))
+        (should (= (emacs-canvas-color-picker--state-saturation state) 0.5))))))
+
+(ert-deftest emacs-canvas-color-picker-test-keyboard-hue-horizontal-no-op ()
+  "Horizontal keys leave hue unchanged and show an echo hint."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer) :canvas '(image :type canvas :id test)
+                  :active-region 'hue :hue 0.3 :saturation 0.5 :value 0.5))
+          (messages nil))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                ((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (push (apply #'format format-string args) messages))))
+        (dolist (key '("b" "<left>" "C-f" "C-<right>"))
+          (call-interactively (key-binding (kbd key)))
+          (should (= (emacs-canvas-color-picker--state-hue state) 0.3))
+          (should (string-match-p "hue" (car messages))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-keyboard-sv-clamps ()
+  "Value and saturation stop at their boundaries."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer) :canvas '(image :type canvas :id test)
+                  :hue 0.5 :saturation 1.0 :value 0.0)))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--update-status) #'ignore))
+        (call-interactively (key-binding (kbd "C-n")))
+        (call-interactively (key-binding (kbd "C-f")))
+        (should (= (emacs-canvas-color-picker--state-value state) 0.0))
+        (should (= (emacs-canvas-color-picker--state-saturation state) 1.0))))))
+
+(ert-deftest emacs-canvas-color-picker-test-keyboard-focus-border ()
+  "TAB passes the active focus region to native rendering without changing HSV."
+  (with-temp-buffer
+    (let* ((geometry (emacs-canvas-color-picker-test--small-geometry))
+           (canvas '(image :type canvas :id test))
+           (state (emacs-canvas-color-picker--state-create
+                   :buffer (current-buffer) :canvas canvas :base-canvas canvas
+                   :geometry geometry :hue 0.5 :saturation 0.25 :value 0.75))
+           (regions nil))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--native-available-p) (lambda () t))
+                ((symbol-function 'emacs-canvas-color-picker-native-render-full)
+                 (lambda (&rest args) (push (car (last args)) regions) t))
+                ((symbol-function 'canvas-refresh) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--update-status) #'ignore))
+        (emacs-canvas-color-picker--refresh state)
+        (call-interactively (key-binding (kbd "TAB")))
+        (should (equal regions '(1 0)))
+        (should (equal (list (emacs-canvas-color-picker--state-hue state)
+                             (emacs-canvas-color-picker--state-saturation state)
+                             (emacs-canvas-color-picker--state-value state))
+                       '(0.5 0.25 0.75)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-display-string-uses-arrow-pointer ()
   "Canvas display string uses the normal arrow pointer."
@@ -1396,7 +1491,7 @@
               ((symbol-function 'canvas-refresh)
                (lambda (&rest args) (push args refresh-args))))
       (emacs-canvas-color-picker--refresh state t)
-      (should (equal (nthcdr 6 full-args) '(6 6 12 32 14 8 2 0.5 0.25 0.75)))
+      (should (equal (nthcdr 6 full-args) '(6 6 12 32 14 8 2 0.5 0.25 0.75 0)))
       (should (equal (nthcdr 4 base-args) '(6 6 12 32 14 8 2)))
       (should (equal (list (nth 1 full-args) (nth 2 full-args)) (list width height)))
       (should (equal (list (nth 1 base-args) (nth 2 base-args)) (list width height)))

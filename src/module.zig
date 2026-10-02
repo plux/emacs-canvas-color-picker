@@ -97,6 +97,52 @@ fn drawHorizontalLine(pixels: []u32, width: usize, height: usize, x1: isize, x2:
     }
 }
 
+fn drawFocusPixel(pixels: []u32, width: usize, height: usize, x: isize, y: isize, color: u32, layout: Layout) void {
+    if (x < 0 or y < 0) return;
+    const ux: usize = @intCast(x);
+    const uy: usize = @intCast(y);
+    if (ux >= width or uy >= height) return;
+    const sv_width = width - layout.padding * 2 - layout.gap - layout.hue_width;
+    const sv_height = height - layout.padding * 3 - layout.swatch_height;
+    const hue_left = layout.padding + sv_width + layout.gap;
+    // Narrow gaps must not put focus inside either interactive region.
+    if (uy >= layout.padding and uy < layout.padding + sv_height and
+        ((ux >= layout.padding and ux < layout.padding + sv_width) or
+            (ux >= hue_left and ux < hue_left + layout.hue_width))) return;
+    const swatch_top = height - layout.padding - layout.swatch_height;
+    if (uy >= swatch_top and uy < swatch_top + layout.swatch_height and
+        ((ux >= layout.padding and ux < layout.padding + layout.swatch_width) or
+            (ux >= layout.padding + layout.swatch_width + layout.swatch_gap and
+                ux < layout.padding + layout.swatch_width * 2 + layout.swatch_gap))) return;
+    pixels[uy * width + ux] = color;
+}
+
+fn drawFocusRect(pixels: []u32, width: usize, height: usize, left: isize, top: isize, right: isize, bottom: isize, color: u32, layout: Layout) void {
+    var x = left;
+    while (x <= right) : (x += 1) {
+        drawFocusPixel(pixels, width, height, x, top, color, layout);
+        drawFocusPixel(pixels, width, height, x, bottom, color, layout);
+    }
+    var y = top;
+    while (y <= bottom) : (y += 1) {
+        drawFocusPixel(pixels, width, height, left, y, color, layout);
+        drawFocusPixel(pixels, width, height, right, y, color, layout);
+    }
+}
+
+fn renderFocus(pixels: []u32, width: usize, height: usize, layout: Layout, focus: c.intmax_t) void {
+    const padding = layout.padding;
+    if (width <= padding * 2 + layout.gap + layout.hue_width or height <= padding * 3 + layout.swatch_height) return;
+    const sv_width = width - padding * 2 - layout.gap - layout.hue_width;
+    const sv_height = height - padding * 3 - layout.swatch_height;
+    const left: isize = @intCast(if (focus == 1) padding + sv_width + layout.gap else padding);
+    const top: isize = @intCast(padding);
+    const right: isize = @intCast(if (focus == 1) padding + sv_width + layout.gap + layout.hue_width - 1 else padding + sv_width - 1);
+    const bottom = top + @as(isize, @intCast(sv_height)) - 1;
+    drawFocusRect(pixels, width, height, left - 2, top - 2, right + 2, bottom + 2, marker_black, layout);
+    drawFocusRect(pixels, width, height, left - 1, top - 1, right + 1, bottom + 1, marker_white, layout);
+}
+
 fn drawCircleOutline(pixels: []u32, width: usize, height: usize, cx: isize, cy: isize, radius: isize, color: u32) void {
     const radius2 = radius * radius;
     const inner_radius = @max(@as(isize, 0), radius - 1);
@@ -297,8 +343,10 @@ fn nativeRenderFull(env: [*c]c.emacs_env, nargs: c.ptrdiff_t, args: [*c]c.emacs_
     const initial_hue = env.*.extract_float.?(env, args[13]);
     const initial_saturation = env.*.extract_float.?(env, args[14]);
     const initial_value = env.*.extract_float.?(env, args[15]);
+    const focus = env.*.extract_integer.?(env, args[16]);
     if (env.*.non_local_exit_check.?(env) != c.emacs_funcall_exit_return) return nil(env);
     renderBase(canvas.pixels, canvas.width, canvas.height, hue, layout);
+    renderFocus(canvas.pixels, canvas.width, canvas.height, layout, focus);
     renderMarkers(canvas.pixels, canvas.width, canvas.height, hue, saturation, value, layout);
     renderSwatches(canvas.pixels, canvas.width, canvas.height, hue, saturation, value, initial_hue, initial_saturation, initial_value, layout);
     return truth(env);
@@ -319,7 +367,7 @@ export fn emacs_module_init(runtime: [*c]c.struct_emacs_runtime) c_int {
     const render_markers_fn = env.*.make_function.?(env, 13, 13, nativeRenderMarkers, "Render color picker markers into a canvas.", null);
     defalias(env, "emacs-canvas-color-picker-native-render-markers", render_markers_fn);
 
-    const render_full_fn = env.*.make_function.?(env, 16, 16, nativeRenderFull, "Render the full color picker palette into a canvas.", null);
+    const render_full_fn = env.*.make_function.?(env, 17, 17, nativeRenderFull, "Render the full color picker palette into a canvas.", null);
     defalias(env, "emacs-canvas-color-picker-native-render-full", render_full_fn);
 
     return 0;

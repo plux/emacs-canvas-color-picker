@@ -56,7 +56,7 @@ The picker keeps its layout proportions at other scale values."
 (declare-function emacs-canvas-color-picker-native-render-markers nil
                   (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-full nil
-                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value))
+                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value focus-region))
 
 (defun emacs-canvas-color-picker--trace (event &rest properties)
   "Append trace EVENT with PROPERTIES when tracing is enabled."
@@ -125,6 +125,7 @@ The picker keeps its layout proportions at other scale values."
   hue
   saturation
   value
+  (active-region 'sv)
   initial-hue
   initial-saturation
   initial-value
@@ -159,6 +160,26 @@ The picker keeps its layout proportions at other scale values."
     (define-key map (kbd "q") #'emacs-canvas-color-picker--cancel)
     (define-key map (kbd "<escape>") #'emacs-canvas-color-picker--cancel)
     (define-key map (kbd "C-c C-k") #'emacs-canvas-color-picker--cancel)
+    (dolist (binding '(("<up>" . emacs-canvas-color-picker--up)
+                       ("p" . emacs-canvas-color-picker--up)
+                       ("<down>" . emacs-canvas-color-picker--down)
+                       ("n" . emacs-canvas-color-picker--down)
+                       ("<left>" . emacs-canvas-color-picker--left)
+                       ("b" . emacs-canvas-color-picker--left)
+                       ("<right>" . emacs-canvas-color-picker--right)
+                       ("f" . emacs-canvas-color-picker--right)
+                       ("C-<up>" . emacs-canvas-color-picker--up-large)
+                       ("C-p" . emacs-canvas-color-picker--up-large)
+                       ("C-<down>" . emacs-canvas-color-picker--down-large)
+                       ("C-n" . emacs-canvas-color-picker--down-large)
+                       ("C-<left>" . emacs-canvas-color-picker--left-large)
+                       ("C-b" . emacs-canvas-color-picker--left-large)
+                       ("C-<right>" . emacs-canvas-color-picker--right-large)
+                       ("C-f" . emacs-canvas-color-picker--right-large)
+                       ("M-p" . emacs-canvas-color-picker--hue-up)
+                       ("M-n" . emacs-canvas-color-picker--hue-down)
+                       ("TAB" . emacs-canvas-color-picker--toggle-region)))
+      (define-key map (kbd (car binding)) (cdr binding)))
     map)
   "Key and mouse map attached to the canvas display string.")
 
@@ -560,7 +581,8 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
         (emacs-canvas-color-picker--geometry-marker-radius geometry)
         (float (or initial-hue hue))
         (float (or initial-saturation saturation))
-        (float (or initial-value value)))))
+        (float (or initial-value value))
+        0)))
 
 (defun emacs-canvas-color-picker--draw-palette
     (data geometry hue saturation value &optional canvas initial-hue initial-saturation initial-value)
@@ -667,7 +689,8 @@ native module. Otherwise use the pure Elisp renderer."
        canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius
        (float (or (emacs-canvas-color-picker--state-initial-hue state) hue))
        (float (or (emacs-canvas-color-picker--state-initial-saturation state) saturation))
-       (float (or (emacs-canvas-color-picker--state-initial-value state) value))))))
+       (float (or (emacs-canvas-color-picker--state-initial-value state) value))
+       (if (eq (emacs-canvas-color-picker--state-active-region state) 'hue) 1 0)))))
 
 (defun emacs-canvas-color-picker--refresh (state &optional rebuild-base)
   "Redraw and refresh STATE.
@@ -704,6 +727,60 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
          :reload-data reload-data)
         (canvas-refresh (emacs-canvas-color-picker--state-canvas state)
                         reload-data)))))
+
+(defun emacs-canvas-color-picker--move (direction large &optional direct-hue)
+  "Move in DIRECTION by a fine or LARGE step, optionally in hue directly."
+  (let ((state emacs-canvas-color-picker--state))
+    (when (and state (not (emacs-canvas-color-picker--state-done state)))
+      (let ((region (if direct-hue 'hue (emacs-canvas-color-picker--state-active-region state)))
+            (step (if large 0.1 0.01)))
+        (cond
+         ((eq region 'hue)
+          (if (memq direction '(up down))
+              (progn
+                (setf (emacs-canvas-color-picker--state-hue state)
+                      (mod (+ (emacs-canvas-color-picker--state-hue state)
+                              (* (if (eq direction 'up) -1.0 1.0)
+                                 (/ (if large 15.0 1.0) 360.0))) 1.0))
+                (emacs-canvas-color-picker--refresh state t)
+                (emacs-canvas-color-picker--update-status state))
+            (message "Hue strip: use Up/Down to adjust hue, TAB for saturation/value")))
+         (t
+          (pcase direction
+            ('up (setf (emacs-canvas-color-picker--state-value state)
+                       (emacs-canvas-color-picker--clamp01
+                        (+ (emacs-canvas-color-picker--state-value state) step))))
+            ('down (setf (emacs-canvas-color-picker--state-value state)
+                         (emacs-canvas-color-picker--clamp01
+                          (- (emacs-canvas-color-picker--state-value state) step))))
+            ('left (setf (emacs-canvas-color-picker--state-saturation state)
+                         (emacs-canvas-color-picker--clamp01
+                          (- (emacs-canvas-color-picker--state-saturation state) step))))
+            ('right (setf (emacs-canvas-color-picker--state-saturation state)
+                          (emacs-canvas-color-picker--clamp01
+                           (+ (emacs-canvas-color-picker--state-saturation state) step)))))
+          (emacs-canvas-color-picker--refresh state)
+          (emacs-canvas-color-picker--update-status state)))))))
+
+(defun emacs-canvas-color-picker--up () (interactive) (emacs-canvas-color-picker--move 'up nil))
+(defun emacs-canvas-color-picker--down () (interactive) (emacs-canvas-color-picker--move 'down nil))
+(defun emacs-canvas-color-picker--left () (interactive) (emacs-canvas-color-picker--move 'left nil))
+(defun emacs-canvas-color-picker--right () (interactive) (emacs-canvas-color-picker--move 'right nil))
+(defun emacs-canvas-color-picker--up-large () (interactive) (emacs-canvas-color-picker--move 'up t))
+(defun emacs-canvas-color-picker--down-large () (interactive) (emacs-canvas-color-picker--move 'down t))
+(defun emacs-canvas-color-picker--left-large () (interactive) (emacs-canvas-color-picker--move 'left t))
+(defun emacs-canvas-color-picker--right-large () (interactive) (emacs-canvas-color-picker--move 'right t))
+(defun emacs-canvas-color-picker--hue-up () (interactive) (emacs-canvas-color-picker--move 'up nil t))
+(defun emacs-canvas-color-picker--hue-down () (interactive) (emacs-canvas-color-picker--move 'down nil t))
+
+(defun emacs-canvas-color-picker--toggle-region ()
+  "Switch keyboard focus between the square and the hue strip."
+  (interactive)
+  (when-let* ((state emacs-canvas-color-picker--state))
+    (setf (emacs-canvas-color-picker--state-active-region state)
+          (if (eq (emacs-canvas-color-picker--state-active-region state) 'sv) 'hue 'sv))
+    (emacs-canvas-color-picker--refresh state)
+    (emacs-canvas-color-picker--update-status state)))
 
 (defun emacs-canvas-color-picker--apply-hit (state hit)
   "Apply HIT to STATE and refresh the picker."
@@ -947,15 +1024,7 @@ Return the current coordinates when they are available."
                     cursor-type nil
                     mode-line-format nil
                     truncate-lines t)
-        (use-local-map (let ((map (make-sparse-keymap)))
-                         (define-key map (kbd "RET") #'emacs-canvas-color-picker--accept)
-                         (define-key map (kbd "C-m") #'emacs-canvas-color-picker--accept)
-                         (define-key map (kbd "C-c C-c") #'emacs-canvas-color-picker--accept)
-                         (define-key map (kbd "C-g") #'emacs-canvas-color-picker--cancel)
-                         (define-key map (kbd "q") #'emacs-canvas-color-picker--cancel)
-                         (define-key map (kbd "<escape>") #'emacs-canvas-color-picker--cancel)
-                         (define-key map (kbd "C-c C-k") #'emacs-canvas-color-picker--cancel)
-                         map))
+        (use-local-map emacs-canvas-color-picker--mouse-map)
         (insert (emacs-canvas-color-picker--display-string canvas))
         (goto-char (point-min))
         (setq buffer-read-only t)
@@ -1183,6 +1252,7 @@ Return the current coordinates when they are available."
      :hue (nth 0 hsv)
      :saturation (nth 1 hsv)
      :value (nth 2 hsv)
+     :active-region 'sv
      :initial-hue (nth 0 hsv)
      :initial-saturation (nth 1 hsv)
      :initial-value (nth 2 hsv)
