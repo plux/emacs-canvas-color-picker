@@ -513,7 +513,7 @@
                       'caller-window)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-frame-position-near-cursor ()
-  "The picker opens beside point in the caller's window."
+  "The picker opens beside point and below its row."
   (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
             ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
             ((symbol-function 'window-point) (lambda (_window) 12))
@@ -526,7 +526,35 @@
              (lambda (_window) '(100 60 800 650))))
     (should (equal (emacs-canvas-color-picker--frame-position
                     'parent-frame 200 160 'caller-window)
-                   '(153 . 80)))))
+                   '(153 . 98)))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-below-row ()
+  "The child frame starts below the visible source row."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point)
+             (lambda (&rest _args)
+               '(caller-window 12 (30 . 20) 0 nil 12 nil nil nil (15 . 27))))
+            ((symbol-function 'window-inside-pixel-edges)
+             (lambda (_window) '(100 60 800 650))))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 200 160 'caller-window)
+                   '(153 . 107)))))
+
+(ert-deftest emacs-canvas-color-picker-test-frame-position-above-near-bottom ()
+  "The child frame moves above the row instead of covering the preview."
+  (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
+            ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
+            ((symbol-function 'window-point) (lambda (_window) 12))
+            ((symbol-function 'posn-at-point)
+             (lambda (&rest _args)
+               '(caller-window 12 (30 . 600) 0 nil 12 nil nil nil (15 . 27))))
+            ((symbol-function 'window-inside-pixel-edges)
+             (lambda (_window) '(100 60 800 690))))
+    (should (equal (emacs-canvas-color-picker--frame-position
+                    'parent-frame 200 160 'caller-window)
+                   '(153 . 500)))))
 
 (ert-deftest emacs-canvas-color-picker-test-frame-position-uses-left-side ()
   "The picker moves left when the right side cannot hold it."
@@ -540,7 +568,7 @@
              (lambda (_window) '(100 60 800 650))))
     (should (equal (emacs-canvas-color-picker--frame-position
                     'parent-frame 200 160 'caller-window)
-                   '(542 . 80)))))
+                   '(542 . 98)))))
 
 (ert-deftest emacs-canvas-color-picker-test-frame-position-clamps-width ()
   "The picker stays within the parent when neither side fits."
@@ -554,10 +582,10 @@
              (lambda (_window) '(0 0 300 650))))
     (should (equal (emacs-canvas-color-picker--frame-position
                     'parent-frame 200 160 'caller-window)
-                   '(0 . 20)))))
+                   '(0 . 38)))))
 
 (ert-deftest emacs-canvas-color-picker-test-frame-position-clamps-height ()
-  "The picker keeps its top edge within the parent frame."
+  "The picker moves above a bottom-edge source row."
   (cl-letf (((symbol-function 'frame-pixel-width) (lambda (_frame) 900))
             ((symbol-function 'frame-pixel-height) (lambda (_frame) 700))
             ((symbol-function 'window-point) (lambda (_window) 12))
@@ -568,7 +596,7 @@
              (lambda (_window) '(100 60 800 650))))
     (should (equal (emacs-canvas-color-picker--frame-position
                     'parent-frame 200 160 'caller-window)
-                   '(153 . 540)))))
+                   '(153 . 500)))))
 
 (ert-deftest emacs-canvas-color-picker-test-frame-position-invisible-point ()
   "The old clamped position remains available when point is invisible."
@@ -943,6 +971,35 @@
               (should (eq (window-buffer caller) source))
               (should-not emacs-canvas-color-picker--active-state))))
       (kill-buffer source))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-buffer-resize-cleans-preview ()
+  "A buffer-mode resize cancellation removes the source preview."
+  (let ((emacs-canvas-color-picker-display 'buffer)
+        (width 400) (height 500)
+        emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "source")
+        (let* ((source (current-buffer))
+               (caller (selected-window))
+               (picker (split-window caller))
+               state)
+          (set-window-buffer caller source)
+          (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                    ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                    ((symbol-function 'window-body-width) (lambda (&rest _args) width))
+                    ((symbol-function 'window-body-height) (lambda (&rest _args) height))
+                    ((symbol-function 'display-buffer)
+                     (lambda (buffer &rest _args)
+                       (set-window-buffer picker buffer)
+                       picker)))
+            (setq state (emacs-canvas-color-picker-insert "#ff0000" nil 'buffer))
+            (should (overlay-buffer (emacs-canvas-color-picker--state-preview-overlay state)))
+            (setq width 1 height 1)
+            (run-hook-with-args 'window-size-change-functions (selected-frame))
+            (should (emacs-canvas-color-picker--state-done state))
+            (should-not (emacs-canvas-color-picker--state-preview-overlay state))
+            (should (equal (with-current-buffer source (buffer-string)) "source"))))))))
 
 (ert-deftest emacs-canvas-color-picker-test-buffer-display-rejects-second-open ()
   "A live picker rejects a second open, even with another display mode."
@@ -1339,6 +1396,248 @@
     (let ((state (emacs-canvas-color-picker--make-at-point-state (current-buffer))))
       (funcall (emacs-canvas-color-picker--state-callback state) "#ff0000")
       (should (equal (buffer-string) "color: #ff0000")))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-insert-preview-cancel ()
+  "The default insert preview leaves buffer text intact and cancels cleanly."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+    (with-temp-buffer
+      (insert "before after")
+      (goto-char 8)
+      (let ((source (current-buffer))
+            (position (point))
+            (unrelated (make-overlay 1 3))
+            state)
+        (set-window-buffer (selected-window) source)
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (setq state (emacs-canvas-color-picker-insert "#ff0000" 'emacs-rgb))
+          (should (equal (buffer-string) "before after"))
+          (should (= (point) position))
+          (should (string-prefix-p "RET accept" (emacs-canvas-color-picker--status-text state)))
+          (let ((overlay (emacs-canvas-color-picker--state-preview-overlay state)))
+            (should (eq (overlay-buffer overlay) source))
+            (should (= (overlay-start overlay) position))
+            (should (equal (overlay-get overlay 'before-string) "#xff0000")))
+          (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
+          (emacs-canvas-color-picker--update-status state)
+          (should (equal (overlay-get (emacs-canvas-color-picker--state-preview-overlay state)
+                                      'before-string)
+                         "#x00ff00"))
+          (should (equal (buffer-string) "before after"))
+          (emacs-canvas-color-picker--cancel state)
+          (should-not (emacs-canvas-color-picker--state-preview-overlay state))
+          (should (eq (overlay-buffer unrelated) source))
+          (should (equal (buffer-string) "before after"))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-toggle ()
+  "Explicit nil disables and explicit t enables preview regardless of default."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+    (with-temp-buffer
+      (insert "start")
+      (set-window-buffer (selected-window) (current-buffer))
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+        (let ((emacs-canvas-color-picker-inline-preview t))
+          (let ((state (emacs-canvas-color-picker-insert nil nil nil nil)))
+            (should (string-prefix-p "#3399cc    RET" (emacs-canvas-color-picker--status-text state)))
+            (should-not (emacs-canvas-color-picker--state-preview-overlay state))
+            (emacs-canvas-color-picker--cancel state)))
+        (let ((emacs-canvas-color-picker-inline-preview nil))
+          (let ((state (emacs-canvas-color-picker-insert nil nil nil t)))
+            (should (string-prefix-p "RET accept" (emacs-canvas-color-picker--status-text state)))
+            (should (overlay-buffer (emacs-canvas-color-picker--state-preview-overlay state)))
+            (emacs-canvas-color-picker--cancel state))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-at-point-replacement ()
+  "At-point preview replaces a formatted literal without editing source text."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+    (with-temp-buffer
+      (insert "#xAf112233")
+      (goto-char 4)
+      (set-window-buffer (selected-window) (current-buffer))
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+        (let ((state (emacs-canvas-color-picker-at-point)))
+          (should (equal (buffer-string) "#xAf112233"))
+          (should (cl-some (lambda (overlay)
+                             (equal (overlay-get overlay 'display) "#xAf112233"))
+                           (overlays-at (point))))
+          (setf (emacs-canvas-color-picker--state-hue state) 0.0
+                (emacs-canvas-color-picker--state-saturation state) 1.0
+                (emacs-canvas-color-picker--state-value state) 1.0)
+          (emacs-canvas-color-picker--update-status state)
+          (should (cl-some (lambda (overlay)
+                             (equal (overlay-get overlay 'display) "#xAfff0000"))
+                           (overlays-at (point))))
+          (emacs-canvas-color-picker--accept state)
+          (should (equal (buffer-string) "#xAfff0000"))
+          (should-not (overlays-at (point)))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-at-point-formats ()
+  "Inline preview matches each supported at-point replacement format."
+  (dolist (case '(("112233" "ff0000")
+                  ("#112233" "#ff0000")
+                  ("#112233aF" "#ff0000aF")
+                  ("#xAf112233" "#xAfff0000")
+                  ("#x112233" "#xff0000")
+                  ("0x112233" "0xff0000")))
+    (ert-info ((car case))
+      (let (emacs-canvas-color-picker--active-state)
+        (save-window-excursion
+          (with-temp-buffer
+            (insert (car case))
+            (goto-char (+ (point-min) 3))
+            (set-window-buffer (selected-window) (current-buffer))
+            (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                      ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                      ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+              (let ((state (emacs-canvas-color-picker-at-point)))
+                (setf (emacs-canvas-color-picker--state-hue state) 0.0
+                      (emacs-canvas-color-picker--state-saturation state) 1.0
+                      (emacs-canvas-color-picker--state-value state) 1.0)
+                (emacs-canvas-color-picker--update-status state)
+                (should (equal (overlay-get (emacs-canvas-color-picker--state-preview-overlay state)
+                                            'display)
+                               (cadr case)))
+                (should (equal (buffer-string) (car case)))
+                (emacs-canvas-color-picker--accept state)
+                (should (equal (buffer-string) (cadr case)))))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-at-point-disabled ()
+  "Explicit nil keeps the status preview and creates no source overlay."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "#x112233")
+        (goto-char 4)
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (let ((state (emacs-canvas-color-picker-at-point nil nil)))
+            (should (string-prefix-p "#x112233    RET" (emacs-canvas-color-picker--status-text state)))
+            (should-not (overlays-at (point)))
+            (emacs-canvas-color-picker--cancel state)
+            (should (equal (buffer-string) "#x112233"))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-at-point-no-match ()
+  "At-point previews insertion when no color literal is present."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "word")
+        (goto-char 3)
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (let* ((state (emacs-canvas-color-picker-at-point))
+                 (overlay (emacs-canvas-color-picker--state-preview-overlay state)))
+            (should (equal (buffer-string) "word"))
+            (should (equal (overlay-get overlay 'before-string) "#3399cc"))
+            (emacs-canvas-color-picker--accept state)
+            (should (equal (buffer-string) "wo#3399ccrd"))
+            (should-not (emacs-canvas-color-picker--state-preview-overlay state))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-at-point-tracks-source-edit ()
+  "An edit before the literal keeps preview and replacement on that literal."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "start #x112233 end")
+        (goto-char 10)
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (let ((state (emacs-canvas-color-picker-at-point)))
+            (goto-char (point-min))
+            (insert "prefix ")
+            (emacs-canvas-color-picker--update-status state)
+            (should (equal (overlay-get (emacs-canvas-color-picker--state-preview-overlay state)
+                                        'display)
+                           "#x112233"))
+            (emacs-canvas-color-picker--accept state)
+            (should (equal (buffer-string) "prefix start #x112233 end"))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-invalid-anchor-uses-status ()
+  "A lost preview anchor removes the overlay and restores status text."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "source")
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (let ((state (emacs-canvas-color-picker-insert "#ff0000")))
+            (should (overlay-buffer (emacs-canvas-color-picker--state-preview-overlay state)))
+            (set-marker (emacs-canvas-color-picker--state-preview-start state) nil)
+            (emacs-canvas-color-picker--update-status state)
+            (should-not (emacs-canvas-color-picker--state-preview-overlay state))
+            (should (string-prefix-p "#ff0000    RET"
+                                     (emacs-canvas-color-picker--status-text state)))
+            (emacs-canvas-color-picker--cancel state)))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-insert-accept-once ()
+  "Accept removes the preview and writes the chosen value once."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "before after")
+        (goto-char 8)
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (let ((state (emacs-canvas-color-picker-insert "#ff0000" 'emacs-rgb)))
+            (should (equal (buffer-string) "before after"))
+            (emacs-canvas-color-picker--accept state)
+            (should (equal (buffer-string) "before #xff0000after"))
+            (should-not (emacs-canvas-color-picker--state-preview-overlay state))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-open-failure-cleans-overlay ()
+  "A failed open removes the temporary preview and leaves source text intact."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "keep")
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame)
+                   (lambda (_state) (error "frame unavailable"))))
+          (should-error (emacs-canvas-color-picker-insert))
+          (should (equal (buffer-string) "keep"))
+          (should-not (overlays-in (point-min) (point-max)))
+          (should-not emacs-canvas-color-picker--active-state))))))
+
+(ert-deftest emacs-canvas-color-picker-test-inline-hidden-source-uses-status ()
+  "The status shows the color when the source window changes buffer."
+  (let (emacs-canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "source")
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore))
+          (let ((state (emacs-canvas-color-picker-insert "#ff0000")))
+            (set-window-buffer (selected-window) (get-buffer-create " *picker hidden source*"))
+            (unwind-protect
+                (progn
+                  (emacs-canvas-color-picker--update-status state)
+                  (should (string-prefix-p "#ff0000    RET"
+                                           (emacs-canvas-color-picker--status-text state)))
+                  (should-not (emacs-canvas-color-picker--state-preview-overlay state)))
+              (emacs-canvas-color-picker--cancel state)
+              (kill-buffer " *picker hidden source*"))))))))
 
 (ert-deftest emacs-canvas-color-picker-test-insert-command-does-not-replace-at-point ()
   "Insert callback inserts at point and does not replace an existing color."

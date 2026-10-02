@@ -24,6 +24,10 @@ The picker keeps its layout proportions at other scale values."
   "Display the picker in a child frame or an Emacs buffer window."
   :type '(choice (const child-frame) (const buffer)))
 
+(defcustom emacs-canvas-color-picker-inline-preview t
+  "Show a temporary color preview in the source buffer for insert and at-point."
+  :type 'boolean)
+
 (defcustom emacs-canvas-color-picker-native-module-file
   (expand-file-name "../zig-out/lib/libcolor-picker.so"
                     (file-name-directory (or load-file-name buffer-file-name default-directory)))
@@ -128,6 +132,11 @@ The picker keeps its layout proportions at other scale values."
   callback
   output-format
   output-alpha
+  preview-buffer
+  preview-window
+  preview-start
+  preview-end
+  preview-overlay
   replace-start
   replace-end
   replace-prefixed
@@ -591,12 +600,38 @@ native module. Otherwise use the pure Elisp renderer."
    (emacs-canvas-color-picker--state-output-format state)
    (emacs-canvas-color-picker--state-output-alpha state)))
 
+(defun emacs-canvas-color-picker--update-preview (state)
+  "Show STATE's selected color at its source location when visible."
+  (let ((buffer (emacs-canvas-color-picker--state-preview-buffer state))
+        (window (emacs-canvas-color-picker--state-preview-window state))
+        (overlay (emacs-canvas-color-picker--state-preview-overlay state)))
+    (let ((start (emacs-canvas-color-picker--state-preview-start state))
+          (end (emacs-canvas-color-picker--state-preview-end state)))
+      (if (and (buffer-live-p buffer) (window-live-p window)
+               (eq (window-buffer window) buffer)
+               (markerp start) (eq (marker-buffer start) buffer)
+               (or (not end) (and (markerp end) (eq (marker-buffer end) buffer))))
+          (with-current-buffer buffer
+            (unless (overlayp overlay)
+              (setq overlay (make-overlay start (or end start) buffer))
+              (setf (emacs-canvas-color-picker--state-preview-overlay state) overlay))
+            (move-overlay overlay start (or end start) buffer)
+            (overlay-put overlay (if end 'display 'before-string)
+                         (emacs-canvas-color-picker--output-text state)))
+        (when (overlayp overlay)
+          (delete-overlay overlay)
+          (setf (emacs-canvas-color-picker--state-preview-overlay state) nil))))))
+
 (defun emacs-canvas-color-picker--status-text (state)
   "Return status text for STATE."
-  (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--output-text state)))
+  (if (and (overlayp (emacs-canvas-color-picker--state-preview-overlay state))
+           (overlay-buffer (emacs-canvas-color-picker--state-preview-overlay state)))
+      "RET accept, q cancel"
+    (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--output-text state))))
 
 (defun emacs-canvas-color-picker--update-status (state)
   "Update the status line for STATE."
+  (emacs-canvas-color-picker--update-preview state)
   (when-let* ((marker (emacs-canvas-color-picker--state-status-marker state))
               (buffer (marker-buffer marker)))
     (with-current-buffer buffer
@@ -817,7 +852,11 @@ Return the current coordinates when they are available."
   "Release the frame or window and buffer owned by STATE."
   (let ((frame (emacs-canvas-color-picker--state-frame state))
         (window (emacs-canvas-color-picker--state-window state))
-        (buffer (emacs-canvas-color-picker--state-buffer state)))
+        (buffer (emacs-canvas-color-picker--state-buffer state))
+        (overlay (emacs-canvas-color-picker--state-preview-overlay state)))
+    (when (overlayp overlay)
+      (delete-overlay overlay)
+      (setf (emacs-canvas-color-picker--state-preview-overlay state) nil))
     (when (eq (emacs-canvas-color-picker--state-display state) 'buffer)
       (remove-hook 'window-size-change-functions #'emacs-canvas-color-picker--window-resized))
     (when (frame-live-p frame)
@@ -949,12 +988,20 @@ Return the current coordinates when they are available."
          (cursor-x (and xy (+ (nth 0 edges) (car xy))))
          (cursor-y (and xy (+ (nth 1 edges) (cdr xy))))
          (cursor-width (or (car (nth 9 position)) 0))
+         (row-height (or (and position (cdr (nth 9 position)))
+                         (and position window (frame-char-height (window-frame window)))
+                         0))
          (gap 8)
          (right (and cursor-x (+ cursor-x cursor-width gap)))
          (left (cond ((and right (<= (+ right width) parent-width)) right)
                      (cursor-x (- cursor-x width gap))
                      (t 40)))
-         (top (or cursor-y 40)))
+         (below (and cursor-y (+ cursor-y row-height)))
+         (above (and cursor-y (- cursor-y height)))
+         (top (cond ((and below (<= (+ below height) parent-height)) below)
+                    ((and above (>= above 0)) above)
+                    (cursor-y cursor-y)
+                    (t 40))))
     (cons (max 0 (min (- parent-width width) left))
           (max 0 (min (- parent-height height) top)))))
 
@@ -1098,10 +1145,12 @@ Return the current coordinates when they are available."
       (progn
         (emacs-canvas-color-picker--ensure-canvas-available)
         (emacs-canvas-color-picker--refresh state t)
+        (emacs-canvas-color-picker--update-preview state)
         (emacs-canvas-color-picker--setup-buffer state)
         (if (eq (emacs-canvas-color-picker--state-display state) 'buffer)
             (emacs-canvas-color-picker--make-window state)
           (emacs-canvas-color-picker--make-frame state))
+        (emacs-canvas-color-picker--update-status state)
         state)
     (error
      (emacs-canvas-color-picker--cleanup state)
@@ -1232,24 +1281,32 @@ OUTPUT-FORMAT selects the callback and preview format; nil uses `css-rgb'."
       ('c-rgb (concat "0x" rgb))
       (_ (error "Unsupported color output format: %S" format)))))
 
-(defun emacs-canvas-color-picker--make-insert-state (target-buffer &optional initial-color output-format display)
+(defun emacs-canvas-color-picker--make-insert-state (target-buffer &optional initial-color output-format display preview)
   "Return insert-only picker state for TARGET-BUFFER."
-  (let ((marker (copy-marker (point) t)))
-    (emacs-canvas-color-picker--make-state
-     (lambda (text)
-       (when (buffer-live-p target-buffer)
-         (with-current-buffer target-buffer
-           (save-excursion
-             (goto-char marker)
-             (insert text))))
-       (set-marker marker nil))
-     initial-color nil display output-format)))
+  (let* ((marker (copy-marker (point) t))
+         (state (emacs-canvas-color-picker--make-state
+                 (lambda (text)
+                   (when (buffer-live-p target-buffer)
+                     (with-current-buffer target-buffer
+                       (save-excursion
+                         (goto-char marker)
+                         (insert text))))
+                   (set-marker marker nil))
+                 initial-color nil display output-format)))
+    (when preview
+      (setf (emacs-canvas-color-picker--state-preview-buffer state) target-buffer
+            (emacs-canvas-color-picker--state-preview-window state)
+            (emacs-canvas-color-picker--state-parent-window state)
+            (emacs-canvas-color-picker--state-preview-start state) marker))
+    state))
 
-(defun emacs-canvas-color-picker--make-at-point-state (target-buffer &optional display)
+(defun emacs-canvas-color-picker--make-at-point-state (target-buffer &optional display preview)
   "Return at-point picker state for TARGET-BUFFER."
   (let* ((match (emacs-canvas-color-picker--hex-at-point-bounds))
          (initial-color (and match (plist-get match :rgb)))
          (insert-marker (copy-marker (point) t))
+         (replace-start (and match (copy-marker (plist-get match :start))))
+         (replace-end (and match (copy-marker (plist-get match :end) t)))
          (state (emacs-canvas-color-picker--make-state
                  (lambda (text)
                    (when (buffer-live-p target-buffer)
@@ -1257,19 +1314,28 @@ OUTPUT-FORMAT selects the callback and preview format; nil uses `css-rgb'."
                        (save-excursion
                          (if match
                              (progn
-                               (goto-char (plist-get match :start))
-                               (delete-region (plist-get match :start) (plist-get match :end))
+                               (goto-char replace-start)
+                               (delete-region replace-start replace-end)
                                (insert text))
                            (goto-char insert-marker)
                            (insert text)))))
-                   (set-marker insert-marker nil))
+                   (set-marker insert-marker nil)
+                   (when replace-start (set-marker replace-start nil))
+                   (when replace-end (set-marker replace-end nil)))
                  initial-color nil display
                  (and match (plist-get match :format))
                  (and match (plist-get match :alpha)))))
     (when match
-      (setf (emacs-canvas-color-picker--state-replace-start state) (plist-get match :start)
-            (emacs-canvas-color-picker--state-replace-end state) (plist-get match :end)
+      (setf (emacs-canvas-color-picker--state-replace-start state) replace-start
+            (emacs-canvas-color-picker--state-replace-end state) replace-end
             (emacs-canvas-color-picker--state-replace-prefixed state) (plist-get match :prefixed)))
+    (when preview
+      (setf (emacs-canvas-color-picker--state-preview-buffer state) target-buffer
+            (emacs-canvas-color-picker--state-preview-window state)
+            (emacs-canvas-color-picker--state-parent-window state)
+            (emacs-canvas-color-picker--state-preview-start state)
+            (or replace-start insert-marker)
+            (emacs-canvas-color-picker--state-preview-end state) replace-end))
     state))
 
 ;;;###autoload
@@ -1289,27 +1355,36 @@ DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
    initial-color display output-format))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-insert (&optional initial-color output-format display)
+(defun emacs-canvas-color-picker-insert (&optional initial-color output-format display &rest inline-preview)
   "Open the color picker and insert the selected hex color at point.
 
 INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
 OUTPUT-FORMAT selects `css-rgb', `css-rgba', `emacs-argb',
 `emacs-rgb', or `c-rgb'; nil uses `css-rgb'.
-DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil.
+An explicit fourth argument INLINE-PREVIEW overrides the Customize default."
   (interactive)
+  (when (cdr inline-preview)
+    (error "Too many inline preview arguments"))
   (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker--open-state
    (emacs-canvas-color-picker--make-insert-state
-    (current-buffer) initial-color output-format display)))
+    (current-buffer) initial-color output-format display
+    (if inline-preview (car inline-preview) emacs-canvas-color-picker-inline-preview))))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-at-point (&optional display)
+(defun emacs-canvas-color-picker-at-point (&optional display &rest inline-preview)
   "Open the color picker and replace a hex color at point when present.
 
-DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil.
+An explicit second argument INLINE-PREVIEW overrides the Customize default."
   (interactive)
+  (when (cdr inline-preview)
+    (error "Too many inline preview arguments"))
   (emacs-canvas-color-picker--open-state
-   (emacs-canvas-color-picker--make-at-point-state (current-buffer) display)))
+   (emacs-canvas-color-picker--make-at-point-state
+    (current-buffer) display
+    (if inline-preview (car inline-preview) emacs-canvas-color-picker-inline-preview))))
 
 (provide 'color-picker)
 
