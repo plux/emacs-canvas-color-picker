@@ -51,13 +51,6 @@
   (should-error (emacs-canvas-color-picker--hex-to-hsv "#xyzxyz"))
   (should-error (emacs-canvas-color-picker--hex-to-hsv nil)))
 
-(ert-deftest emacs-canvas-color-picker-test-argb-composes-opaque-pixels ()
-  "ARGB helper composes opaque canvas pixels."
-  (should (= (emacs-canvas-color-picker--argb 255 0 0) #xFFFF0000))
-  (should (= (emacs-canvas-color-picker--argb 0 255 0) #xFF00FF00))
-  (should (= (emacs-canvas-color-picker--argb 0 0 255) #xFF0000FF))
-  (should (= (emacs-canvas-color-picker--argb -1 300 15) #xFF00FF0F)))
-
 (ert-deftest emacs-canvas-color-picker-test-hit-test-sv-corners ()
   "SV hit tests map corners to expected saturation and value."
   (let* ((geometry (emacs-canvas-color-picker-test--small-geometry))
@@ -87,49 +80,51 @@
     (should-not (emacs-canvas-color-picker--hit-test geometry 5 1))
     (should-not (emacs-canvas-color-picker--hit-test geometry 99 99))))
 
-(ert-deftest emacs-canvas-color-picker-test-draw-palette-fills-opaque-pixels ()
-  "Palette drawing fills the full data vector with opaque pixels."
-  (let* ((geometry (emacs-canvas-color-picker-test--small-geometry))
-         (width (emacs-canvas-color-picker--geometry-width geometry))
-         (height (emacs-canvas-color-picker--geometry-height geometry))
-         (data (make-vector (* width height) nil)))
-    (emacs-canvas-color-picker--draw-palette data geometry 0.5 0.5 0.5)
-    (should (= (length data) (* width height)))
-    (dotimes (index (length data))
-      (should (integerp (aref data index)))
-      (should (= (logand (aref data index) #xFF000000) #xFF000000)))))
+(ert-deftest emacs-canvas-color-picker-test-native-required-before-render ()
+  "A missing module stops opening before any render or display change."
+  (let ((emacs-canvas-color-picker--active-state nil)
+        (emacs-canvas-color-picker--native-loaded nil)
+        (emacs-canvas-color-picker-native-module-file "/no-such-color-picker-module.so")
+        (rendered nil))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+              ((symbol-function 'emacs-canvas-color-picker--refresh)
+               (lambda (&rest _) (setq rendered t)))
+              ((symbol-function 'emacs-canvas-color-picker--setup-buffer)
+               (lambda (&rest _) (ert-fail "Picker displayed without a module"))))
+      (should-error (emacs-canvas-color-picker-read-color #'ignore "#ff0000" 'buffer)
+                    :type 'user-error)
+      (should-not rendered)
+      (should-not emacs-canvas-color-picker--active-state))))
 
-(ert-deftest emacs-canvas-color-picker-test-draw-palette-rejects-wrong-vector-size ()
-  "Palette drawing rejects vectors that do not match the geometry size."
-  (let ((geometry (emacs-canvas-color-picker-test--small-geometry)))
-    (should-error (emacs-canvas-color-picker--draw-palette (make-vector 3 0) geometry 0 0 0))))
+(ert-deftest emacs-canvas-color-picker-test-native-load-failure-cleans-preview ()
+  "A failed module load leaves source text and window state unchanged."
+  (let ((emacs-canvas-color-picker--active-state nil)
+        (emacs-canvas-color-picker--native-loaded nil)
+        (emacs-canvas-color-picker-native-module-file emacs-canvas-color-picker-test--project-dir))
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "keep")
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'module-load) (lambda (_path) (error "module failed")))
+                  ((symbol-function 'emacs-canvas-color-picker--refresh)
+                   (lambda (&rest _) (ert-fail "Rendered without a module"))))
+          (should-error (emacs-canvas-color-picker-insert "#ff0000") :type 'user-error)
+          (should (equal (buffer-string) "keep"))
+          (should-not (overlays-in (point-min) (point-max)))
+          (should-not emacs-canvas-color-picker--active-state))))))
 
-(ert-deftest emacs-canvas-color-picker-test-draw-palette-handles-small-geometries ()
-  "Palette drawing keeps marker writes inside tiny geometries."
-  (let* ((geometry (emacs-canvas-color-picker--make-geometry
-                    '(:padding 0 :sv-width 1 :sv-height 1 :gap 0 :hue-width 1 :hue-height 1)))
-         (data (make-vector (* (emacs-canvas-color-picker--geometry-width geometry)
-                               (emacs-canvas-color-picker--geometry-height geometry))
-                            nil)))
-    (emacs-canvas-color-picker--draw-palette data geometry 0 0 1)
-    (dotimes (index (length data))
-      (should (integerp (aref data index))))))
-
-(ert-deftest emacs-canvas-color-picker-test-refresh-markers-restores-old-marker-pixels ()
-  "Marker-only refresh restores pixels from the cached base palette."
-  (let* ((geometry (emacs-canvas-color-picker--make-geometry
-                    '(:padding 2 :sv-width 20 :sv-height 20 :gap 2 :hue-width 3 :hue-height 20)))
-         (width (emacs-canvas-color-picker--geometry-width geometry))
-         (height (emacs-canvas-color-picker--geometry-height geometry))
-         (base (make-vector (* width height) nil))
-         (data (make-vector (* width height) nil)))
-    (emacs-canvas-color-picker--draw-base-palette base geometry 0.5)
-    (emacs-canvas-color-picker--refresh-markers data base geometry 0.5 0.0 1.0)
-    (let ((after-first (copy-sequence data)))
-      (emacs-canvas-color-picker--refresh-markers data base geometry 0.5 1.0 0.0)
-      (let ((old-marker-ring-index (emacs-canvas-color-picker--pixel-index geometry 7 2)))
-        (should (/= (aref after-first old-marker-ring-index) (aref base old-marker-ring-index)))
-        (should (= (aref data old-marker-ring-index) (aref base old-marker-ring-index)))))))
+(ert-deftest emacs-canvas-color-picker-test-native-missing-entry-point ()
+  "Opening fails cleanly when a loaded module has no full renderer."
+  (let ((emacs-canvas-color-picker--active-state nil)
+        (emacs-canvas-color-picker--native-loaded nil)
+        (emacs-canvas-color-picker-native-module-file emacs-canvas-color-picker-test--project-dir))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+              ((symbol-function 'module-load) #'ignore)
+              ((symbol-function 'emacs-canvas-color-picker-native-render-full) nil))
+      (should-error (emacs-canvas-color-picker-read-color #'ignore "#ff0000" 'buffer)
+                    :type 'user-error)
+      (should-not emacs-canvas-color-picker--active-state))))
 
 (ert-deftest emacs-canvas-color-picker-test-native-refresh-passes-elisp-geometry ()
   "Native refresh passes Elisp geometry so hit-testing and drawing align."
@@ -143,19 +138,14 @@
                        :data data))
          (state (emacs-canvas-color-picker--state-create
                  :canvas canvas
-                 :base-canvas canvas
-                 :data data
-                 :base-data data
                  :geometry geometry
                  :hue 0.5
                  :saturation 0.25
                  :value 0.75))
          (full-args nil))
-    (cl-letf (((symbol-function 'emacs-canvas-color-picker--native-available-p) (lambda () t))
-              ((symbol-function 'emacs-canvas-color-picker-native-render-base) (lambda (&rest _args) t))
-              ((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest args) (setq full-args args) t))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest args) (setq full-args args) t))
               ((symbol-function 'canvas-refresh) (lambda (&rest _args) nil)))
-      (emacs-canvas-color-picker--refresh state t)
+      (emacs-canvas-color-picker--refresh state)
       (should (equal (nthcdr 6 full-args)
                      (list (emacs-canvas-color-picker--geometry-padding geometry)
                            (emacs-canvas-color-picker--geometry-gap geometry)
@@ -175,27 +165,20 @@
          (data (make-vector (* (emacs-canvas-color-picker--geometry-width geometry)
                                (emacs-canvas-color-picker--geometry-height geometry))
                             0))
-         (base-data (copy-sequence data))
          (canvas (list 'image :type 'canvas :id 'test-canvas
                        :data-width (emacs-canvas-color-picker--geometry-width geometry)
                        :data-height (emacs-canvas-color-picker--geometry-height geometry)
                        :data data))
-         (base-canvas (copy-sequence canvas))
          (state (emacs-canvas-color-picker--state-create
                  :canvas canvas
-                 :base-canvas base-canvas
-                 :data data
-                 :base-data base-data
                  :geometry geometry
                  :hue 0.5
                  :saturation 0.25
                  :value 0.75))
          (refresh-args nil))
-    (cl-letf (((symbol-function 'emacs-canvas-color-picker--native-available-p) (lambda () t))
-              ((symbol-function 'emacs-canvas-color-picker-native-render-base) (lambda (&rest _args) t))
-              ((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest _args) t))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest _args) t))
               ((symbol-function 'canvas-refresh) (lambda (&rest args) (setq refresh-args args))))
-      (emacs-canvas-color-picker--refresh state t)
+      (emacs-canvas-color-picker--refresh state)
       (should (equal refresh-args (list canvas nil))))))
 
 (ert-deftest emacs-canvas-color-picker-test-mouse-click-updates-without-finishing ()
@@ -705,12 +688,11 @@
     (let* ((geometry (emacs-canvas-color-picker-test--small-geometry))
            (canvas '(image :type canvas :id test))
            (state (emacs-canvas-color-picker--state-create
-                   :buffer (current-buffer) :canvas canvas :base-canvas canvas
+                   :buffer (current-buffer) :canvas canvas
                    :geometry geometry :hue 0.5 :saturation 0.25 :value 0.75))
            (regions nil))
       (emacs-canvas-color-picker--setup-buffer state)
-      (cl-letf (((symbol-function 'emacs-canvas-color-picker--native-available-p) (lambda () t))
-                ((symbol-function 'emacs-canvas-color-picker-native-render-full)
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker-native-render-full)
                  (lambda (&rest args) (push (car (last args)) regions) t))
                 ((symbol-function 'canvas-refresh) #'ignore)
                 ((symbol-function 'emacs-canvas-color-picker--update-status) #'ignore))
@@ -1066,7 +1048,7 @@
                      (top (emacs-canvas-color-picker--geometry-sv-top geometry)))
                 (should (<= (emacs-canvas-color-picker--geometry-width geometry) width))
                 (should (<= (emacs-canvas-color-picker--geometry-height geometry) height))
-                (should (= (length (emacs-canvas-color-picker--state-data state))
+                (should (= (length (plist-get (cdr (emacs-canvas-color-picker--state-canvas state)) :data))
                            (* (emacs-canvas-color-picker--geometry-width geometry)
                               (emacs-canvas-color-picker--geometry-height geometry))))
                 (should (eq (plist-get (emacs-canvas-color-picker--hit-test geometry left top) :region) 'sv))
@@ -1436,7 +1418,7 @@
                               (* 15 43))) 2)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-scale-state-canvas-size ()
-  "Both state canvases and vectors use scaled geometry dimensions."
+  "The native canvas and its seed vector use scaled geometry dimensions."
   (let ((emacs-canvas-color-picker-scale 0.5))
     (with-temp-buffer
       (cl-letf (((symbol-function 'frame-char-height) (lambda (&optional _frame) 32)))
@@ -1445,86 +1427,32 @@
                (width (emacs-canvas-color-picker--geometry-width geometry))
                (height (emacs-canvas-color-picker--geometry-height geometry)))
           (should (<= (abs (- width 160)) 2))
-          (dolist (canvas (list (emacs-canvas-color-picker--state-canvas state)
-                                (emacs-canvas-color-picker--state-base-canvas state)))
+          (let ((canvas (emacs-canvas-color-picker--state-canvas state)))
             (should (= (plist-get (cdr canvas) :data-width) width))
-            (should (= (plist-get (cdr canvas) :data-height) height)))
-          (should (= (length (emacs-canvas-color-picker--state-data state)) (* width height)))
-          (should (= (length (emacs-canvas-color-picker--state-base-data state)) (* width height))))))))
-
-(ert-deftest emacs-canvas-color-picker-test-scale-elisp-render-regions ()
-  "Scaled drawing writes opaque palette and swatch pixels into its vector."
-  (let* ((emacs-canvas-color-picker-scale 0.5)
-         (geometry (emacs-canvas-color-picker--make-geometry))
-         (width (emacs-canvas-color-picker--geometry-width geometry))
-         (height (emacs-canvas-color-picker--geometry-height geometry))
-         (data (make-vector (* width height) nil))
-         (padding (emacs-canvas-color-picker--geometry-padding geometry))
-         (hue-x (+ padding (emacs-canvas-color-picker--geometry-sv-width geometry)
-                   (emacs-canvas-color-picker--geometry-gap geometry)))
-         (swatch-y (+ padding (emacs-canvas-color-picker--geometry-sv-height geometry)
-                      8 2)))
-    (should (= width 158))
-    (should (= height 160))
-    (emacs-canvas-color-picker--draw-palette data geometry 0.5 0.5 0.5)
-    (dolist (position (list (cons (+ padding 10) (+ padding 10))
-                            (cons (+ hue-x 2) (+ padding 10))
-                            (cons (+ (emacs-canvas-color-picker--geometry-new-swatch-left geometry) 2)
-                                  swatch-y)
-                            (cons (+ (emacs-canvas-color-picker--geometry-current-swatch-left geometry) 2)
-                                  swatch-y)))
-      (ert-info ((format "pixel %S" position))
-        (let ((pixel (aref data (emacs-canvas-color-picker--pixel-index
-                                 geometry (car position) (cdr position)))))
-          (should (integerp pixel))
-          (should (= (logand pixel #xFF000000) #xFF000000)))))
-    (should-error (emacs-canvas-color-picker--draw-palette
-                   (make-vector (1- (* width height)) 0) geometry 0.5 0.5 0.5))))
-
-(ert-deftest emacs-canvas-color-picker-test-scale-selection-ring ()
-  "The SV selection ring grows with the picker at scale two."
-  (let* ((emacs-canvas-color-picker-scale 2.0)
-         (geometry (emacs-canvas-color-picker--make-geometry))
-         (data (make-vector (* (emacs-canvas-color-picker--geometry-width geometry)
-                               (emacs-canvas-color-picker--geometry-height geometry)) nil))
-         (cx (+ (emacs-canvas-color-picker--geometry-sv-left geometry)
-                (round (* 0.5 (1- (emacs-canvas-color-picker--geometry-sv-width geometry))))))
-         (cy (+ (emacs-canvas-color-picker--geometry-sv-top geometry)
-                (round (* 0.5 (1- (emacs-canvas-color-picker--geometry-sv-height geometry)))))))
-    (emacs-canvas-color-picker--draw-palette data geometry 0.5 0.5 0.5)
-    (should (= (aref data (emacs-canvas-color-picker--pixel-index geometry (+ cx 10) cy))
-               emacs-canvas-color-picker--marker-black))))
+            (should (= (plist-get (cdr canvas) :data-height) height))
+            (should (= (length (plist-get (cdr canvas) :data)) (* width height)))))))))
 
 (ert-deftest emacs-canvas-color-picker-test-scale-native-refresh-geometry ()
-  "Native full and base renders receive scaled canvas bounds and offsets."
+  "Native full render receives scaled canvas bounds and offsets."
   (let* ((emacs-canvas-color-picker-scale 0.5)
          (geometry (emacs-canvas-color-picker--make-geometry))
          (width (emacs-canvas-color-picker--geometry-width geometry))
          (height (emacs-canvas-color-picker--geometry-height geometry))
          (data (make-vector (* width height) 0))
-         (base-data (copy-sequence data))
          (canvas (list 'image :type 'canvas :data-width width :data-height height :data data))
-         (base-canvas (list 'image :type 'canvas :data-width width :data-height height :data base-data))
          (state (emacs-canvas-color-picker--state-create
-                 :canvas canvas :base-canvas base-canvas :data data :base-data base-data
-                 :geometry geometry :hue 0.5 :saturation 0.25 :value 0.75))
-         (base-args nil)
+                 :canvas canvas :geometry geometry :hue 0.5 :saturation 0.25 :value 0.75))
          (full-args nil)
          (refresh-args nil))
     (should (= width 158))
     (should (= height 160))
-    (cl-letf (((symbol-function 'emacs-canvas-color-picker--native-available-p) (lambda () t))
-              ((symbol-function 'emacs-canvas-color-picker-native-render-base)
-               (lambda (&rest args) (setq base-args args) t))
-              ((symbol-function 'emacs-canvas-color-picker-native-render-full)
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker-native-render-full)
                (lambda (&rest args) (setq full-args args) t))
               ((symbol-function 'canvas-refresh)
                (lambda (&rest args) (push args refresh-args))))
-      (emacs-canvas-color-picker--refresh state t)
+      (emacs-canvas-color-picker--refresh state)
       (should (equal (nthcdr 6 full-args) '(6 6 12 32 14 8 2 0.5 0.25 0.75 0)))
-      (should (equal (nthcdr 4 base-args) '(6 6 12 32 14 8 2)))
       (should (equal (list (nth 1 full-args) (nth 2 full-args)) (list width height)))
-      (should (equal (list (nth 1 base-args) (nth 2 base-args)) (list width height)))
       (should (equal refresh-args (list (list canvas nil)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-scale-frame-size ()

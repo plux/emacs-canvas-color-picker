@@ -1,7 +1,7 @@
 ;;; color-picker-benchmark.el --- Color picker draw benchmark -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Batch benchmark for pure Elisp color picker rendering helpers.
+;; Batch benchmark for native color picker rendering helpers.
 
 ;;; Code:
 
@@ -31,10 +31,6 @@
 (defvar emacs-canvas-color-picker-benchmark-base-iterations
   (string-to-number (or (getenv "COLOR_PICKER_BENCHMARK_BASE_ITERATIONS") "10"))
   "Number of base palette iterations measured by the benchmark.")
-
-(defvar emacs-canvas-color-picker-benchmark-native
-  (member (getenv "COLOR_PICKER_BENCHMARK_NATIVE") '("1" "t" "true" "yes"))
-  "Whether to benchmark the native renderer.")
 
 (defun emacs-canvas-color-picker-benchmark--parse-size (text)
   "Parse TEXT as WIDTHxHEIGHT."
@@ -75,12 +71,10 @@
         :data data))
 
 (defun emacs-canvas-color-picker-benchmark--maybe-load-native ()
-  "Load the native module when native benchmarking is enabled."
-  (when emacs-canvas-color-picker-benchmark-native
-    (when-let* ((module-file (getenv "COLOR_PICKER_MODULE_FILE")))
-      (setq emacs-canvas-color-picker-native-module-file module-file))
-    (unless (emacs-canvas-color-picker-load-native t)
-      (error "Native color picker module is not available"))))
+  "Load the required native module."
+  (when-let* ((module-file (getenv "COLOR_PICKER_MODULE_FILE")))
+    (setq emacs-canvas-color-picker-native-module-file module-file))
+  (emacs-canvas-color-picker-load-native))
 
 (defun emacs-canvas-color-picker-benchmark--run-size (size)
   "Run benchmark for SIZE."
@@ -104,27 +98,19 @@
          (base-ms (emacs-canvas-color-picker-benchmark--time
                    emacs-canvas-color-picker-benchmark-base-iterations
                    (lambda ()
-                     (if emacs-canvas-color-picker-benchmark-native
-                         (emacs-canvas-color-picker-native-render-base base-canvas canvas-width canvas-height 0.55 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius)
-                       (emacs-canvas-color-picker--draw-base-palette base geometry 0.55)))))
+                     (emacs-canvas-color-picker-native-render-base base-canvas canvas-width canvas-height 0.55 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))))
          (marker-ms (emacs-canvas-color-picker-benchmark--time
                      emacs-canvas-color-picker-benchmark-iterations
                      (lambda ()
-                       (if emacs-canvas-color-picker-benchmark-native
-                           (emacs-canvas-color-picker-native-render-markers canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius)
-                         (emacs-canvas-color-picker--refresh-markers data base geometry 0.55 0.75 0.8)))))
+                       (emacs-canvas-color-picker-native-render-markers canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))))
          (full-ms (emacs-canvas-color-picker-benchmark--time
                    emacs-canvas-color-picker-benchmark-iterations
                    (lambda ()
-                     (if emacs-canvas-color-picker-benchmark-native
-                         (emacs-canvas-color-picker-native-render-full canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius 0.55 0.75 0.8 0)
-                       (emacs-canvas-color-picker--draw-palette data geometry 0.55 0.75 0.8))))))
+                     (emacs-canvas-color-picker-native-render-full canvas canvas-width canvas-height 0.55 0.75 0.8 padding gap hue-width swatch-width swatch-height swatch-gap marker-radius 0.55 0.75 0.8 0)))))
     (princ
      (format (concat "%s size=%dx%d canvas=%dx%d pixels=%d "
                      "base-avg=%.3fms marker-avg=%.3fms full-avg=%.3fms\n")
-             (if emacs-canvas-color-picker-benchmark-native
-                 "color-picker-native-benchmark"
-               "color-picker-benchmark")
+             "color-picker-native-benchmark"
              width
              height
              canvas-width

@@ -1,7 +1,7 @@
 ;;; color-picker.el --- Canvas color picker widget -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Pure Emacs Lisp color picker experiment for the Emacs 32 canvas image type.
+;; Elisp color picker UI with native rendering for Emacs 32 canvas images.
 
 ;;; Code:
 
@@ -31,12 +31,8 @@ The picker keeps its layout proportions at other scale values."
 (defcustom emacs-canvas-color-picker-native-module-file
   (expand-file-name "../zig-out/lib/libcolor-picker.so"
                     (file-name-directory (or load-file-name buffer-file-name default-directory)))
-  "Native module file used for accelerated color picker rendering."
+  "Native module file required for color picker rendering."
   :type 'file)
-
-(defcustom emacs-canvas-color-picker-use-native t
-  "Whether to use the native renderer when it can be loaded."
-  :type 'boolean)
 
 (defcustom emacs-canvas-color-picker-trace-file
   (getenv "COLOR_PICKER_TRACE_FILE")
@@ -44,17 +40,11 @@ The picker keeps its layout proportions at other scale values."
   :type '(choice (const nil) file))
 
 (defconst emacs-canvas-color-picker--buffer-name "*emacs-canvas-color-picker*")
-(defconst emacs-canvas-color-picker--marker-black #xFF000000)
-(defconst emacs-canvas-color-picker--marker-white #xFFFFFFFF)
 (defconst emacs-canvas-color-picker--background #xFF4D4D4D)
 
 (defvar emacs-canvas-color-picker--native-loaded nil
   "Non-nil when the native color picker renderer is loaded.")
 
-(declare-function emacs-canvas-color-picker-native-render-base nil
-                  (canvas width height hue padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
-(declare-function emacs-canvas-color-picker-native-render-markers nil
-                  (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
 (declare-function emacs-canvas-color-picker-native-render-full nil
                   (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value focus-region))
 
@@ -118,9 +108,6 @@ The picker keeps its layout proportions at other scale values."
   created-window
   buffer
   canvas
-  base-canvas
-  data
-  base-data
   geometry
   hue
   saturation
@@ -268,13 +255,6 @@ The picker keeps its layout proportions at other scale values."
   (apply #'emacs-canvas-color-picker--rgb-to-hsv
          (emacs-canvas-color-picker--hex-to-rgb color)))
 
-(defun emacs-canvas-color-picker--argb (red green blue)
-  "Compose an opaque ARGB32 pixel from RED, GREEN, and BLUE."
-  (logior #xFF000000
-          (ash (emacs-canvas-color-picker--clamp-byte red) 16)
-          (ash (emacs-canvas-color-picker--clamp-byte green) 8)
-          (emacs-canvas-color-picker--clamp-byte blue)))
-
 (defun emacs-canvas-color-picker--make-geometry (&optional plist parent-frame)
   "Return picker geometry with base overrides from PLIST.
 When PARENT-FRAME is non-nil, target ten of its character heights in width."
@@ -385,9 +365,8 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
 When NOERROR is non-nil, return nil instead of signaling load errors."
   (interactive)
   (cond
-   (emacs-canvas-color-picker--native-loaded t)
-   ((not emacs-canvas-color-picker-use-native) nil)
-   ((not (file-exists-p emacs-canvas-color-picker-native-module-file))
+   ((and (not emacs-canvas-color-picker--native-loaded)
+         (not (file-exists-p emacs-canvas-color-picker-native-module-file)))
     (unless noerror
       (user-error "Native color picker module does not exist: %s"
                   emacs-canvas-color-picker-native-module-file))
@@ -395,208 +374,15 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
    (t
     (condition-case error
         (progn
-          (module-load emacs-canvas-color-picker-native-module-file)
+          (unless emacs-canvas-color-picker--native-loaded
+            (module-load emacs-canvas-color-picker-native-module-file))
+          (unless (fboundp 'emacs-canvas-color-picker-native-render-full)
+            (error "Native color picker module lacks full renderer"))
           (setq emacs-canvas-color-picker--native-loaded t))
       (error
        (unless noerror
-         (signal (car error) (cdr error)))
+         (user-error "Cannot load native color picker module: %s" (error-message-string error)))
        nil)))))
-
-(defun emacs-canvas-color-picker--native-available-p ()
-  "Return non-nil when native rendering is available."
-  (and (emacs-canvas-color-picker-load-native t)
-       (fboundp 'emacs-canvas-color-picker-native-render-full)))
-
-(defun emacs-canvas-color-picker--pixel-index (geometry x y)
-  "Return vector index for GEOMETRY pixel X Y."
-  (+ x (* y (emacs-canvas-color-picker--geometry-width geometry))))
-
-(defun emacs-canvas-color-picker--set-pixel (data geometry x y color)
-  "Set DATA pixel for GEOMETRY at X Y to COLOR when inside bounds."
-  (when (and (>= x 0)
-             (< x (emacs-canvas-color-picker--geometry-width geometry))
-             (>= y 0)
-             (< y (emacs-canvas-color-picker--geometry-height geometry)))
-    (aset data (emacs-canvas-color-picker--pixel-index geometry x y) color)))
-
-(defun emacs-canvas-color-picker--draw-circle-outline (data geometry cx cy radius color)
-  "Draw a circle outline in DATA at CX CY with RADIUS and COLOR."
-  (let ((r2 (* radius radius))
-        (inner2 (* (max 0 (1- radius)) (max 0 (1- radius)))))
-    (dotimes (dy (1+ (* 2 radius)))
-      (dotimes (dx (1+ (* 2 radius)))
-        (let* ((x (+ cx (- dx radius)))
-               (y (+ cy (- dy radius)))
-               (local-x (- x cx))
-               (local-y (- y cy))
-               (distance2 (+ (* local-x local-x) (* local-y local-y))))
-          (when (and (<= distance2 r2) (> distance2 inner2))
-            (emacs-canvas-color-picker--set-pixel data geometry x y color)))))))
-
-(defun emacs-canvas-color-picker--draw-horizontal-line (data geometry x1 x2 y color)
-  "Draw a horizontal line from X1 to X2 at Y with COLOR."
-  (let ((start (min x1 x2))
-        (end (max x1 x2)))
-    (dotimes (offset (1+ (- end start)))
-      (emacs-canvas-color-picker--set-pixel data geometry (+ start offset) y color))))
-
-(defun emacs-canvas-color-picker--fill-rect (data geometry left top width height color)
-  "Fill rectangle LEFT TOP WIDTH HEIGHT in DATA with COLOR."
-  (dotimes (y height)
-    (dotimes (x width)
-      (emacs-canvas-color-picker--set-pixel data geometry (+ left x) (+ top y) color))))
-
-(defun emacs-canvas-color-picker--hsv-pixel (hue saturation value)
-  "Return an opaque ARGB pixel for HUE SATURATION VALUE."
-  (apply #'emacs-canvas-color-picker--argb
-         (emacs-canvas-color-picker--hsv-to-rgb hue saturation value)))
-
-(defun emacs-canvas-color-picker--draw-swatches (data geometry hue saturation value initial-hue initial-saturation initial-value)
-  "Draw new and current color swatches."
-  (let ((top (emacs-canvas-color-picker--geometry-swatch-top geometry))
-        (width (emacs-canvas-color-picker--geometry-swatch-width geometry))
-        (height (emacs-canvas-color-picker--geometry-swatch-height geometry)))
-    (emacs-canvas-color-picker--fill-rect
-     data geometry
-     (emacs-canvas-color-picker--geometry-new-swatch-left geometry)
-     top width height
-     (emacs-canvas-color-picker--hsv-pixel hue saturation value))
-    (emacs-canvas-color-picker--fill-rect
-     data geometry
-     (emacs-canvas-color-picker--geometry-current-swatch-left geometry)
-     top width height
-     (emacs-canvas-color-picker--hsv-pixel initial-hue initial-saturation initial-value))))
-
-(defun emacs-canvas-color-picker--draw-selection-markers (data geometry hue saturation value)
-  "Draw selection markers into DATA for GEOMETRY and HSV values."
-  (let* ((sv-left (emacs-canvas-color-picker--geometry-sv-left geometry))
-         (sv-top (emacs-canvas-color-picker--geometry-sv-top geometry))
-         (sv-width (emacs-canvas-color-picker--geometry-sv-width geometry))
-         (sv-height (emacs-canvas-color-picker--geometry-sv-height geometry))
-         (hue-left (emacs-canvas-color-picker--geometry-hue-left geometry))
-         (hue-top (emacs-canvas-color-picker--geometry-hue-top geometry))
-         (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry))
-         (hue-height (emacs-canvas-color-picker--geometry-hue-height geometry))
-         (radius (or (emacs-canvas-color-picker--geometry-marker-radius geometry) 5))
-         (s (emacs-canvas-color-picker--clamp01 saturation))
-         (v (emacs-canvas-color-picker--clamp01 value))
-         (h (mod (float hue) 1.0))
-         (sv-x (+ sv-left (round (* s (max 0 (1- sv-width))))))
-         (sv-y (+ sv-top (round (* (- 1.0 v) (max 0 (1- sv-height))))))
-         (hue-y (+ hue-top (round (* h (max 0 (1- hue-height)))))))
-    (emacs-canvas-color-picker--draw-circle-outline data geometry sv-x sv-y radius emacs-canvas-color-picker--marker-black)
-    (emacs-canvas-color-picker--draw-circle-outline data geometry sv-x sv-y (max 0 (1- radius)) emacs-canvas-color-picker--marker-white)
-    (emacs-canvas-color-picker--draw-horizontal-line
-     data geometry (1- hue-left) (+ hue-left hue-width) hue-y emacs-canvas-color-picker--marker-black)
-    (emacs-canvas-color-picker--draw-horizontal-line
-     data geometry hue-left (1- (+ hue-left hue-width)) hue-y emacs-canvas-color-picker--marker-white)))
-
-(defun emacs-canvas-color-picker--validate-data-size (data geometry)
-  "Signal an error unless DATA length matches GEOMETRY."
-  (let ((expected-size (* (emacs-canvas-color-picker--geometry-width geometry)
-                         (emacs-canvas-color-picker--geometry-height geometry))))
-    (unless (= (length data) expected-size)
-      (error "Palette vector size does not match geometry"))))
-
-(defun emacs-canvas-color-picker--blend-channel (base white-factor black-factor)
-  "Blend one BASE color channel with white and black factors."
-  (let* ((toward-white (+ base (/ (* (- 255 base) white-factor) 255)))
-         (toward-black (/ (* toward-white black-factor) 255)))
-    (emacs-canvas-color-picker--clamp-byte toward-black)))
-
-(defun emacs-canvas-color-picker--draw-base-palette (data geometry hue)
-  "Draw the marker-free base palette for HUE into DATA."
-  (emacs-canvas-color-picker--validate-data-size data geometry)
-  (dotimes (index (length data))
-    (aset data index emacs-canvas-color-picker--background))
-  (let* ((sv-left (emacs-canvas-color-picker--geometry-sv-left geometry))
-         (sv-top (emacs-canvas-color-picker--geometry-sv-top geometry))
-         (sv-width (emacs-canvas-color-picker--geometry-sv-width geometry))
-         (sv-height (emacs-canvas-color-picker--geometry-sv-height geometry))
-         (hue-left (emacs-canvas-color-picker--geometry-hue-left geometry))
-         (hue-top (emacs-canvas-color-picker--geometry-hue-top geometry))
-         (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry))
-         (hue-height (emacs-canvas-color-picker--geometry-hue-height geometry))
-         (hue-rgb (emacs-canvas-color-picker--hsv-to-rgb hue 1.0 1.0))
-         (hue-red (nth 0 hue-rgb))
-         (hue-green (nth 1 hue-rgb))
-         (hue-blue (nth 2 hue-rgb)))
-    (dotimes (y sv-height)
-      (let ((black-factor (if (<= sv-height 1)
-                              255
-                            (- 255 (/ (* y 255) (1- sv-height))))))
-        (dotimes (x sv-width)
-          (let* ((white-factor (if (<= sv-width 1)
-                                   0
-                                 (- 255 (/ (* x 255) (1- sv-width)))))
-                 (red (emacs-canvas-color-picker--blend-channel hue-red white-factor black-factor))
-                 (green (emacs-canvas-color-picker--blend-channel hue-green white-factor black-factor))
-                 (blue (emacs-canvas-color-picker--blend-channel hue-blue white-factor black-factor)))
-            (emacs-canvas-color-picker--set-pixel
-             data geometry (+ sv-left x) (+ sv-top y)
-             (emacs-canvas-color-picker--argb red green blue))))))
-    (dotimes (y hue-height)
-      (let* ((h (emacs-canvas-color-picker--position-fraction y hue-height))
-             (rgb (emacs-canvas-color-picker--hsv-to-rgb h 1.0 1.0))
-             (pixel (apply #'emacs-canvas-color-picker--argb rgb)))
-        (dotimes (x hue-width)
-          (emacs-canvas-color-picker--set-pixel
-           data geometry (+ hue-left x) (+ hue-top y) pixel))))))
-
-(defun emacs-canvas-color-picker--copy-vector (destination source)
-  "Copy SOURCE vector contents into DESTINATION."
-  (dotimes (index (length source))
-    (aset destination index (aref source index))))
-
-(defun emacs-canvas-color-picker--refresh-markers
-    (data base-data geometry hue saturation value &optional initial-hue initial-saturation initial-value)
-  "Copy BASE-DATA into DATA and draw selection markers and swatches."
-  (emacs-canvas-color-picker--validate-data-size data geometry)
-  (emacs-canvas-color-picker--validate-data-size base-data geometry)
-  (emacs-canvas-color-picker--copy-vector data base-data)
-  (emacs-canvas-color-picker--draw-selection-markers data geometry hue saturation value)
-  (emacs-canvas-color-picker--draw-swatches
-   data geometry hue saturation value
-   (or initial-hue hue)
-   (or initial-saturation saturation)
-   (or initial-value value)))
-
-(defun emacs-canvas-color-picker--native-render-full
-    (canvas geometry hue saturation value &optional initial-hue initial-saturation initial-value)
-  "Render full picker into CANVAS through the native renderer."
-  (and (emacs-canvas-color-picker--native-available-p)
-       (emacs-canvas-color-picker-native-render-full
-        canvas
-        (emacs-canvas-color-picker--geometry-width geometry)
-        (emacs-canvas-color-picker--geometry-height geometry)
-        (float hue)
-        (float saturation)
-        (float value)
-        (emacs-canvas-color-picker--geometry-padding geometry)
-        (emacs-canvas-color-picker--geometry-gap geometry)
-        (emacs-canvas-color-picker--geometry-hue-width geometry)
-        (emacs-canvas-color-picker--geometry-swatch-width geometry)
-        (emacs-canvas-color-picker--geometry-swatch-height geometry)
-        (emacs-canvas-color-picker--geometry-swatch-gap geometry)
-        (emacs-canvas-color-picker--geometry-marker-radius geometry)
-        (float (or initial-hue hue))
-        (float (or initial-saturation saturation))
-        (float (or initial-value value))
-        0)))
-
-(defun emacs-canvas-color-picker--draw-palette
-    (data geometry hue saturation value &optional canvas initial-hue initial-saturation initial-value)
-  "Draw the palette for HUE, SATURATION, and VALUE into DATA.
-
-When CANVAS is non-nil and the native module is loaded, render through the
-native module. Otherwise use the pure Elisp renderer."
-  (unless (and canvas
-               (emacs-canvas-color-picker--native-render-full
-                canvas geometry hue saturation value initial-hue initial-saturation initial-value))
-    (let ((base-data (make-vector (length data) nil)))
-      (emacs-canvas-color-picker--draw-base-palette base-data geometry hue)
-      (emacs-canvas-color-picker--refresh-markers
-       data base-data geometry hue saturation value initial-hue initial-saturation initial-value))))
 
 (defun emacs-canvas-color-picker--hex-at-point ()
   "Return a hex color near point, or nil."
@@ -667,69 +453,37 @@ native module. Otherwise use the pure Elisp renderer."
       (with-selected-frame (if (frame-live-p parent) parent (selected-frame))
         (message "%s" text)))))
 
-(defun emacs-canvas-color-picker--native-refresh (state rebuild-base)
-  "Refresh STATE through native rendering when possible."
-  (when (emacs-canvas-color-picker--native-available-p)
-    (let* ((geometry (emacs-canvas-color-picker--state-geometry state))
-           (width (emacs-canvas-color-picker--geometry-width geometry))
-           (height (emacs-canvas-color-picker--geometry-height geometry))
-           (hue (float (emacs-canvas-color-picker--state-hue state)))
-           (saturation (float (emacs-canvas-color-picker--state-saturation state)))
-           (value (float (emacs-canvas-color-picker--state-value state)))
-           (base-canvas (emacs-canvas-color-picker--state-base-canvas state))
-           (canvas (emacs-canvas-color-picker--state-canvas state))
-           (padding (emacs-canvas-color-picker--geometry-padding geometry))
-           (gap (emacs-canvas-color-picker--geometry-gap geometry))
-           (hue-width (emacs-canvas-color-picker--geometry-hue-width geometry))
-           (swatch-width (emacs-canvas-color-picker--geometry-swatch-width geometry))
-           (swatch-height (emacs-canvas-color-picker--geometry-swatch-height geometry))
-           (swatch-gap (emacs-canvas-color-picker--geometry-swatch-gap geometry))
-           (marker-radius (emacs-canvas-color-picker--geometry-marker-radius geometry)))
-      (when rebuild-base
-        (emacs-canvas-color-picker-native-render-base
-         base-canvas width height hue padding gap hue-width swatch-width swatch-height swatch-gap marker-radius))
-      (emacs-canvas-color-picker-native-render-full
-       canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius
-       (float (or (emacs-canvas-color-picker--state-initial-hue state) hue))
-       (float (or (emacs-canvas-color-picker--state-initial-saturation state) saturation))
-       (float (or (emacs-canvas-color-picker--state-initial-value state) value))
-       (if (eq (emacs-canvas-color-picker--state-active-region state) 'hue) 1 0)))))
-
-(defun emacs-canvas-color-picker--refresh (state &optional rebuild-base)
-  "Redraw and refresh STATE.
-
-When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
-  (let ((native-rendered (emacs-canvas-color-picker--native-refresh state rebuild-base)))
+(defun emacs-canvas-color-picker--refresh (state)
+  "Redraw and refresh STATE through the native renderer."
+  (let* ((geometry (emacs-canvas-color-picker--state-geometry state))
+         (hue (float (emacs-canvas-color-picker--state-hue state)))
+         (saturation (float (emacs-canvas-color-picker--state-saturation state)))
+         (value (float (emacs-canvas-color-picker--state-value state)))
+         (canvas (emacs-canvas-color-picker--state-canvas state)))
+    (unless (emacs-canvas-color-picker-native-render-full
+             canvas
+             (emacs-canvas-color-picker--geometry-width geometry)
+             (emacs-canvas-color-picker--geometry-height geometry)
+             hue saturation value
+             (emacs-canvas-color-picker--geometry-padding geometry)
+             (emacs-canvas-color-picker--geometry-gap geometry)
+             (emacs-canvas-color-picker--geometry-hue-width geometry)
+             (emacs-canvas-color-picker--geometry-swatch-width geometry)
+             (emacs-canvas-color-picker--geometry-swatch-height geometry)
+             (emacs-canvas-color-picker--geometry-swatch-gap geometry)
+             (emacs-canvas-color-picker--geometry-marker-radius geometry)
+             (float (or (emacs-canvas-color-picker--state-initial-hue state) hue))
+             (float (or (emacs-canvas-color-picker--state-initial-saturation state) saturation))
+             (float (or (emacs-canvas-color-picker--state-initial-value state) value))
+             (if (eq (emacs-canvas-color-picker--state-active-region state) 'hue) 1 0))
+      (error "Native color picker render failed"))
     (emacs-canvas-color-picker--trace
      "refresh-render"
-     :native native-rendered
-     :rebuild-base rebuild-base
-     :hue (emacs-canvas-color-picker--state-hue state)
-     :saturation (emacs-canvas-color-picker--state-saturation state)
-     :value (emacs-canvas-color-picker--state-value state))
-    (unless native-rendered
-      (when rebuild-base
-        (emacs-canvas-color-picker--draw-base-palette
-         (emacs-canvas-color-picker--state-base-data state)
-         (emacs-canvas-color-picker--state-geometry state)
-         (emacs-canvas-color-picker--state-hue state)))
-      (emacs-canvas-color-picker--refresh-markers
-       (emacs-canvas-color-picker--state-data state)
-       (emacs-canvas-color-picker--state-base-data state)
-       (emacs-canvas-color-picker--state-geometry state)
-       (emacs-canvas-color-picker--state-hue state)
-       (emacs-canvas-color-picker--state-saturation state)
-       (emacs-canvas-color-picker--state-value state)
-       (emacs-canvas-color-picker--state-initial-hue state)
-       (emacs-canvas-color-picker--state-initial-saturation state)
-       (emacs-canvas-color-picker--state-initial-value state)))
+     :native t
+     :hue hue :saturation saturation :value value)
     (when (fboundp 'canvas-refresh)
-      (let ((reload-data (and (not native-rendered) t)))
-        (emacs-canvas-color-picker--trace
-         "canvas-refresh"
-         :reload-data reload-data)
-        (canvas-refresh (emacs-canvas-color-picker--state-canvas state)
-                        reload-data)))))
+      (emacs-canvas-color-picker--trace "canvas-refresh" :reload-data nil)
+      (canvas-refresh canvas nil))))
 
 (defun emacs-canvas-color-picker--move (direction large &optional direct-hue)
   "Move in DIRECTION by a fine or LARGE step, optionally in hue directly."
@@ -744,7 +498,7 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
                   (mod (+ (emacs-canvas-color-picker--state-hue state)
                           (* (if (eq direction 'up) -1.0 1.0)
                              (/ (if large 15.0 1.0) 360.0))) 1.0))
-            (emacs-canvas-color-picker--refresh state t)
+            (emacs-canvas-color-picker--refresh state)
             (emacs-canvas-color-picker--update-status state)))
          (t
           (pcase direction
@@ -785,16 +539,14 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
 
 (defun emacs-canvas-color-picker--apply-hit (state hit)
   "Apply HIT to STATE and refresh the picker."
-  (let ((rebuild-base nil))
-    (pcase (plist-get hit :region)
-      ('sv
-       (setf (emacs-canvas-color-picker--state-saturation state) (plist-get hit :s)
-             (emacs-canvas-color-picker--state-value state) (plist-get hit :v)))
-      ('hue
-       (setf (emacs-canvas-color-picker--state-hue state) (plist-get hit :h)
-             rebuild-base t)))
-    (emacs-canvas-color-picker--refresh state rebuild-base)
-    (emacs-canvas-color-picker--update-status state)))
+  (pcase (plist-get hit :region)
+    ('sv
+     (setf (emacs-canvas-color-picker--state-saturation state) (plist-get hit :s)
+           (emacs-canvas-color-picker--state-value state) (plist-get hit :v)))
+    ('hue
+     (setf (emacs-canvas-color-picker--state-hue state) (plist-get hit :h))))
+  (emacs-canvas-color-picker--refresh state)
+  (emacs-canvas-color-picker--update-status state))
 
 (defun emacs-canvas-color-picker--event-position (event)
   "Return the position to use for mouse EVENT."
@@ -1143,16 +895,11 @@ Return the current coordinates when they are available."
     (unless (equal geometry (emacs-canvas-color-picker--state-geometry state))
       (let* ((size (* (emacs-canvas-color-picker--geometry-width geometry)
                       (emacs-canvas-color-picker--geometry-height geometry)))
-             (data (make-vector size emacs-canvas-color-picker--background))
-             (base-data (make-vector size emacs-canvas-color-picker--background)))
+             (data (make-vector size emacs-canvas-color-picker--background)))
         (setf (emacs-canvas-color-picker--state-geometry state) geometry
-              (emacs-canvas-color-picker--state-data state) data
-              (emacs-canvas-color-picker--state-base-data state) base-data
               (emacs-canvas-color-picker--state-canvas state)
-              (emacs-canvas-color-picker--make-canvas geometry data)
-              (emacs-canvas-color-picker--state-base-canvas state)
-              (emacs-canvas-color-picker--make-canvas geometry base-data))
-        (emacs-canvas-color-picker--refresh state t)
+              (emacs-canvas-color-picker--make-canvas geometry data))
+        (emacs-canvas-color-picker--refresh state)
         (emacs-canvas-color-picker--setup-buffer state)))))
 
 (defun emacs-canvas-color-picker--window-resized (&rest _args)
@@ -1203,7 +950,8 @@ Return the current coordinates when they are available."
   (condition-case err
       (progn
         (emacs-canvas-color-picker--ensure-canvas-available)
-        (emacs-canvas-color-picker--refresh state t)
+        (emacs-canvas-color-picker-load-native)
+        (emacs-canvas-color-picker--refresh state)
         (emacs-canvas-color-picker--update-preview state)
         (emacs-canvas-color-picker--setup-buffer state)
         (if (eq (emacs-canvas-color-picker--state-display state) 'buffer)
@@ -1233,9 +981,7 @@ Return the current coordinates when they are available."
          (data (make-vector (* (emacs-canvas-color-picker--geometry-width geometry)
                                (emacs-canvas-color-picker--geometry-height geometry))
                             emacs-canvas-color-picker--background))
-         (base-data (make-vector (length data) emacs-canvas-color-picker--background))
          (canvas (emacs-canvas-color-picker--make-canvas geometry data))
-         (base-canvas (emacs-canvas-color-picker--make-canvas geometry base-data))
          (buffer (or buffer
                      (if (eq display 'buffer)
                          (generate-new-buffer emacs-canvas-color-picker--buffer-name)
@@ -1246,9 +992,6 @@ Return the current coordinates when they are available."
      :display display
      :buffer buffer
      :canvas canvas
-     :base-canvas base-canvas
-     :data data
-     :base-data base-data
      :geometry geometry
      :hue (nth 0 hsv)
      :saturation (nth 1 hsv)
