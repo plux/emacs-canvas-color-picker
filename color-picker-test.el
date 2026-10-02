@@ -218,14 +218,13 @@
       (should (= (emacs-canvas-color-picker--state-value state) 0.5)))))
 
 (ert-deftest emacs-canvas-color-picker-test-current-pointer-coordinates-account-for-status-line ()
-  "Current pointer coordinates convert window pixels to canvas pixels."
+  "Current pointer coordinates start at the canvas's first row."
   (cl-letf (((symbol-function 'window-live-p) (lambda (_window) t))
             ((symbol-function 'mouse-pixel-position) (lambda () (list 'frame 50 70)))
             ((symbol-function 'window-frame) (lambda (_window) 'frame))
-            ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220)))
-            ((symbol-function 'emacs-canvas-color-picker--status-pixel-height) (lambda (_window) 17)))
+            ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220))))
     (should (equal (emacs-canvas-color-picker--current-pointer-coordinates 'window)
-                   '(40 . 33)))))
+                   '(40 . 50)))))
 
 (ert-deftest emacs-canvas-color-picker-test-current-pointer-coordinates-exclude-fringe ()
   "Buffer-mode drags use the canvas text edge, not the fringe."
@@ -237,10 +236,9 @@
       (cl-letf (((symbol-function 'mouse-pixel-position)
                  (lambda () (list (selected-frame) 50 70)))
                 ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220)))
-                ((symbol-function 'window-body-pixel-edges) (lambda (_window) '(18 20 200 220)))
-                ((symbol-function 'emacs-canvas-color-picker--status-pixel-height) (lambda (_window) 17)))
+                ((symbol-function 'window-body-pixel-edges) (lambda (_window) '(18 20 200 220))))
         (should (equal (emacs-canvas-color-picker--current-pointer-coordinates (selected-window))
-                       '(32 . 33)))))))
+                       '(32 . 50)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-current-pointer-coordinates-child-frame-inside-edge ()
   "Child-frame drags retain their original inside-edge coordinates."
@@ -252,20 +250,18 @@
       (cl-letf (((symbol-function 'mouse-pixel-position)
                  (lambda () (list (selected-frame) 50 70)))
                 ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220)))
-                ((symbol-function 'window-body-pixel-edges) (lambda (_window) '(18 20 200 220)))
-                ((symbol-function 'emacs-canvas-color-picker--status-pixel-height) (lambda (_window) 17)))
+                ((symbol-function 'window-body-pixel-edges) (lambda (_window) '(18 20 200 220))))
         (should (equal (emacs-canvas-color-picker--current-pointer-coordinates (selected-window))
-                       '(40 . 33)))))))
+                       '(40 . 50)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-current-pointer-coordinates-handle-dotted-mouse-position ()
   "Current pointer coordinates handle `(FRAME . (X . Y))` mouse positions."
   (cl-letf (((symbol-function 'window-live-p) (lambda (_window) t))
             ((symbol-function 'mouse-pixel-position) (lambda () (cons 'frame (cons 50 70))))
             ((symbol-function 'window-frame) (lambda (_window) 'frame))
-            ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220)))
-            ((symbol-function 'emacs-canvas-color-picker--status-pixel-height) (lambda (_window) 17)))
+            ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220))))
     (should (equal (emacs-canvas-color-picker--current-pointer-coordinates 'window)
-                   '(40 . 33)))))
+                   '(40 . 50)))))
 
 (ert-deftest emacs-canvas-color-picker-test-track-current-pointer-updates-through-canvas-refresh ()
   "Drag timeout updates from current pointer through the canvas refresh path."
@@ -425,18 +421,24 @@
       (should-not allocated))))
 
 (ert-deftest emacs-canvas-color-picker-test-format-preview-updates-status ()
-  "A changed color updates the status row in its requested output format."
+  "A changed color updates the echo message, not the canvas-only buffer."
   (with-temp-buffer
-    (let ((state (emacs-canvas-color-picker--state-create
+    (let ((messages nil)
+          (state (emacs-canvas-color-picker--state-create
                   :buffer (current-buffer)
                   :canvas '(image :type canvas :id test)
                   :output-format 'emacs-argb
                   :hue 0.0 :saturation 1.0 :value 1.0)))
-      (emacs-canvas-color-picker--setup-buffer state)
-      (should (string-prefix-p "#xffff0000    RET" (buffer-string)))
-      (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
-      (emacs-canvas-color-picker--update-status state)
-      (should (string-prefix-p "#xff00ff00    RET" (buffer-string))))))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format-string &rest args)
+                   (push (apply #'format format-string args) messages))))
+        (emacs-canvas-color-picker--setup-buffer state)
+        (emacs-canvas-color-picker--update-status state)
+        (should (equal (car messages) "#xffff0000    RET accept, q cancel"))
+        (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
+        (emacs-canvas-color-picker--update-status state)
+        (should (equal (car messages) "#xff00ff00    RET accept, q cancel"))
+        (should (equal (buffer-string) " "))))))
 
 (ert-deftest emacs-canvas-color-picker-test-format-preview-copy-and-insert ()
   "Copy and insert show and emit the selected output format."
@@ -481,20 +483,119 @@
           (should (equal (buffer-string) (cadr case))))))))
 
 (ert-deftest emacs-canvas-color-picker-test-update-status-replaces-existing-line ()
-  "Status updates replace the existing line instead of appending text."
+  "Repeated echo updates leave the canvas buffer unchanged."
   (with-temp-buffer
     (let ((state (emacs-canvas-color-picker--state-create
-                  :hue 0.0
-                  :saturation 1.0
-                  :value 1.0)))
-      (insert "initial status\n")
-      (setf (emacs-canvas-color-picker--state-status-marker state)
-            (copy-marker (point-min) t))
+                  :buffer (current-buffer)
+                  :canvas '(image :type canvas :id test)
+                  :hue 0.0 :saturation 1.0 :value 1.0)))
+      (cl-letf (((symbol-function 'message) (lambda (&rest _args) nil)))
+        (emacs-canvas-color-picker--setup-buffer state)
+        (emacs-canvas-color-picker--update-status state)
+        (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
+        (emacs-canvas-color-picker--update-status state)
+        (should (equal (buffer-string) " "))))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-canvas-only-buffer ()
+  "The picker buffer contains only the canvas display string."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer)
+                  :canvas '(image :type canvas :id test)
+                  :hue 0.0 :saturation 1.0 :value 1.0)))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (should (= (buffer-size) 1))
+      (should (equal (buffer-string) " "))
+      (should (eq (get-text-property (point-min) 'display) (emacs-canvas-color-picker--state-canvas state))))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-updates-format-and-hints ()
+  "The echo area shows formatted color and hints without a source overlay."
+  (let ((messages nil)
+        (state (emacs-canvas-color-picker--state-create
+                :hue 0.0 :saturation 1.0 :value 1.0 :output-format 'emacs-rgb)))
+    (cl-letf (((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
       (emacs-canvas-color-picker--update-status state)
+      (should (equal (car messages) "#xff0000    RET accept, q cancel"))
       (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
       (emacs-canvas-color-picker--update-status state)
-      (should (equal (buffer-string)
-                     (concat (emacs-canvas-color-picker--status-text state) "\n"))))))
+      (should (equal (car messages) "#x00ff00    RET accept, q cancel")))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-inline-preview-shows-hints ()
+  "An active inline preview leaves only key hints in the echo area."
+  (let ((emacs-canvas-color-picker--active-state nil)
+        (messages nil))
+    (save-window-excursion
+      (with-temp-buffer
+        (insert "source")
+        (set-window-buffer (selected-window) (current-buffer))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                  ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore)
+                  ((symbol-function 'message)
+                   (lambda (format-string &rest args)
+                     (push (apply #'format format-string args) messages))))
+          (let ((state (emacs-canvas-color-picker-insert "#ff0000" 'emacs-rgb)))
+            (unwind-protect
+                (progn
+                  (should (equal (car messages) "RET accept, q cancel"))
+                  (should (equal (overlay-get (emacs-canvas-color-picker--state-preview-overlay state)
+                                              'before-string) "#xff0000")))
+              (emacs-canvas-color-picker--cancel state))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-opens-in-both-modes ()
+  "Opening either display mode publishes formatted hints in the echo area."
+  (dolist (display '(child-frame buffer))
+    (ert-info ((format "display %S" display))
+      (let ((messages nil)
+            (emacs-canvas-color-picker--active-state nil)
+            state)
+        (save-window-excursion
+          (let ((caller (selected-window)))
+            (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                      ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
+                      ((symbol-function 'emacs-canvas-color-picker--make-frame) #'ignore)
+                      ((symbol-function 'window-body-width) (lambda (&rest _args) 400))
+                      ((symbol-function 'window-body-height) (lambda (&rest _args) 500))
+                      ((symbol-function 'display-buffer)
+                       (lambda (buffer &rest _args)
+                         (set-window-buffer caller buffer)
+                         caller))
+                      ((symbol-function 'message)
+                       (lambda (format-string &rest args)
+                         (push (apply #'format format-string args) messages))))
+              (unwind-protect
+                  (progn
+                    (setq state (emacs-canvas-color-picker-read-color
+                                 #'ignore "#ff0000" display 'emacs-rgb))
+                    (should (equal (car messages) "#xff0000    RET accept, q cancel"))
+                    (should (= (with-current-buffer (emacs-canvas-color-picker--state-buffer state)
+                                 (buffer-size)) 1)))
+                (when state (emacs-canvas-color-picker--cancel state))))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-pointer-starts-at-canvas ()
+  "Pointer pixels map directly to canvas pixels without a status row."
+  (let ((window (selected-window)))
+    (cl-letf (((symbol-function 'mouse-pixel-position)
+               (lambda () (list (window-frame window) 50 70)))
+              ((symbol-function 'window-inside-pixel-edges)
+               (lambda (_window) '(10 20 200 220))))
+      (should (equal (emacs-canvas-color-picker--current-pointer-coordinates window)
+                     '(40 . 50))))))
+
+(ert-deftest emacs-canvas-color-picker-test-canvas-keeps-keyboard-bindings ()
+  "RET and q dispatch to the picker while point is on the canvas."
+  (save-window-excursion
+    (with-temp-buffer
+      (set-window-buffer (selected-window) (current-buffer))
+      (emacs-canvas-color-picker--setup-buffer
+       (emacs-canvas-color-picker--state-create
+        :buffer (current-buffer)
+        :canvas '(image :type canvas :id test)
+        :hue 0.0 :saturation 1.0 :value 1.0))
+      (should (eq (key-binding (kbd "RET")) #'emacs-canvas-color-picker--accept))
+      (should (eq (key-binding (kbd "q")) #'emacs-canvas-color-picker--cancel)))))
 
 (ert-deftest emacs-canvas-color-picker-test-display-string-uses-arrow-pointer ()
   "Canvas display string uses the normal arrow pointer."
@@ -619,16 +720,37 @@
       (should (member '(focus picker-frame) calls))
       (should (member '(window (root-window picker-frame)) calls)))))
 
-(ert-deftest emacs-canvas-color-picker-test-frame-size-includes-status-line ()
-  "Frame size includes room for status text above the canvas."
+(ert-deftest emacs-canvas-color-picker-test-frame-size-omits-status-row ()
+  "Child-frame height does not include a character row."
   (let ((geometry (emacs-canvas-color-picker-test--small-geometry)))
     (cl-letf (((symbol-function 'frame-char-height) (lambda (&optional _frame) 17)))
       (let ((size (emacs-canvas-color-picker--frame-size geometry nil)))
         (should (= (car size) (emacs-canvas-color-picker--geometry-width geometry)))
-        (should (= (cdr size) (+ (emacs-canvas-color-picker--geometry-height geometry) 17 1)))))))
+        (should (= (cdr size) (1+ (emacs-canvas-color-picker--geometry-height geometry))))))))
 
-(ert-deftest emacs-canvas-color-picker-test-setup-buffer-keeps-status-at-point ()
-  "The window must not scroll past the status row to show point."
+(ert-deftest emacs-canvas-color-picker-test-echo-frame-size-is-canvas-only ()
+  "Child-frame height includes the canvas and its one-pixel safety margin."
+  (let ((geometry (emacs-canvas-color-picker-test--small-geometry)))
+    (cl-letf (((symbol-function 'frame-char-height) (lambda (&optional _frame) 17)))
+      (should (equal (emacs-canvas-color-picker--frame-size geometry nil)
+                     (cons (emacs-canvas-color-picker--geometry-width geometry)
+                           (1+ (emacs-canvas-color-picker--geometry-height geometry))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-echo-cleanup-preserves-other-message ()
+  "Picker cleanup does not erase a later message from another command."
+  (let ((state (emacs-canvas-color-picker--state-create
+                :hue 0.0 :saturation 1.0 :value 1.0 :done nil))
+        (messages nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (format-string &rest args)
+                 (push (apply #'format format-string args) messages))))
+      (emacs-canvas-color-picker--update-status state)
+      (message "%s" "other command")
+      (emacs-canvas-color-picker--cancel state)
+      (should (equal (car messages) "other command")))))
+
+(ert-deftest emacs-canvas-color-picker-test-setup-buffer-keeps-canvas-at-point ()
+  "Point starts on the canvas display item."
   (with-temp-buffer
     (let ((state (emacs-canvas-color-picker--state-create
                   :buffer (current-buffer)
@@ -798,8 +920,6 @@
                       ((symbol-function 'frame-char-height) (lambda (&optional _frame) 32))
                       ((symbol-function 'window-body-width) (lambda (&rest _args) width))
                       ((symbol-function 'window-body-height) (lambda (&rest _args) height))
-                      ((symbol-function 'emacs-canvas-color-picker--status-pixel-height)
-                       (lambda (_window) 20))
                       ((symbol-function 'display-buffer)
                        (lambda (buffer &rest _args)
                          (set-window-buffer caller buffer)
@@ -807,7 +927,7 @@
               (setq state (emacs-canvas-color-picker-read-color #'ignore "#ff0000"))
               (let ((geometry (emacs-canvas-color-picker--state-geometry state)))
                 (should (<= (emacs-canvas-color-picker--geometry-width geometry) width))
-                (should (<= (emacs-canvas-color-picker--geometry-height geometry) (- height 20))))
+                (should (<= (emacs-canvas-color-picker--geometry-height geometry) height)))
               (let ((old-width (emacs-canvas-color-picker--geometry-width
                                 (emacs-canvas-color-picker--state-geometry state))))
                 (setq width 120 height 155)
@@ -820,7 +940,7 @@
                      (left (emacs-canvas-color-picker--geometry-sv-left geometry))
                      (top (emacs-canvas-color-picker--geometry-sv-top geometry)))
                 (should (<= (emacs-canvas-color-picker--geometry-width geometry) width))
-                (should (<= (emacs-canvas-color-picker--geometry-height geometry) (- height 20)))
+                (should (<= (emacs-canvas-color-picker--geometry-height geometry) height))
                 (should (= (length (emacs-canvas-color-picker--state-data state))
                            (* (emacs-canvas-color-picker--geometry-width geometry)
                               (emacs-canvas-color-picker--geometry-height geometry))))
@@ -844,8 +964,6 @@
                       ((symbol-function 'frame-char-height) (lambda (&optional _frame) 32))
                       ((symbol-function 'window-body-width) (lambda (&rest _args) width))
                       ((symbol-function 'window-body-height) (lambda (&rest _args) height))
-                      ((symbol-function 'emacs-canvas-color-picker--status-pixel-height)
-                       (lambda (_window) 20))
                       ((symbol-function 'display-buffer)
                        (lambda (buffer &rest _args)
                          (set-window-buffer caller buffer)
@@ -855,14 +973,14 @@
                      (initial-width (emacs-canvas-color-picker--geometry-width initial)))
                 (should (> initial-width 400))
                 (should (<= initial-width width))
-                (should (<= (- (- height 20) (emacs-canvas-color-picker--geometry-height initial)) 4))
+                (should (<= (- height (emacs-canvas-color-picker--geometry-height initial)) 4))
                 (setq width 1100 height 1000)
                 (run-hook-with-args 'window-size-change-functions (selected-frame))
                 (let* ((geometry (emacs-canvas-color-picker--state-geometry state))
                        (canvas (emacs-canvas-color-picker--state-canvas state)))
                   (should (> (emacs-canvas-color-picker--geometry-width geometry) initial-width))
                   (should (<= (emacs-canvas-color-picker--geometry-width geometry) width))
-                  (should (<= (emacs-canvas-color-picker--geometry-height geometry) (- height 20)))
+                  (should (<= (emacs-canvas-color-picker--geometry-height geometry) height))
                   (should (= (plist-get (cdr canvas) :data-width)
                              (emacs-canvas-color-picker--geometry-width geometry)))
                   (should (equal (emacs-canvas-color-picker--current-hex state) "#ff0000")))))))
@@ -882,8 +1000,6 @@
                       ((symbol-function 'emacs-canvas-color-picker--refresh) #'ignore)
                       ((symbol-function 'window-body-width) (lambda (&rest _args) width))
                       ((symbol-function 'window-body-height) (lambda (&rest _args) height))
-                      ((symbol-function 'emacs-canvas-color-picker--status-pixel-height)
-                       (lambda (_window) 20))
                       ((symbol-function 'display-buffer)
                        (lambda (buffer &rest _args)
                          (set-window-buffer caller buffer)
@@ -892,7 +1008,7 @@
               (let ((geometry (emacs-canvas-color-picker--state-geometry state)))
                 (should (<= (- width (emacs-canvas-color-picker--geometry-width geometry)) 4))
                 (should (<= (emacs-canvas-color-picker--geometry-width geometry) width))
-                (should (<= (emacs-canvas-color-picker--geometry-height geometry) (- height 20)))))))
+                (should (<= (emacs-canvas-color-picker--geometry-height geometry) height))))))
       (when (and state (not (emacs-canvas-color-picker--state-done state)))
         (emacs-canvas-color-picker--cancel state)))))
 
@@ -1022,8 +1138,8 @@
       (when (and state (not (emacs-canvas-color-picker--state-done state)))
         (emacs-canvas-color-picker--cancel state)))))
 
-(ert-deftest emacs-canvas-color-picker-test-child-frame-shows-status-and-canvas ()
-  "The child frame must display the status row and the entire canvas."
+(ert-deftest emacs-canvas-color-picker-test-child-frame-shows-canvas ()
+  "The child frame must display the entire canvas."
   (skip-unless (and (display-graphic-p) (image-type-available-p 'canvas)))
   (let ((state (emacs-canvas-color-picker-read-color #'ignore)))
     (unwind-protect
@@ -1033,8 +1149,7 @@
           (should (= (window-start window) (with-current-buffer (window-buffer window) (point-min))))
           (should (pos-visible-in-window-p (window-start window) window))
           (should (>= (window-pixel-height window)
-                      (+ (frame-char-height (window-frame window))
-                         (emacs-canvas-color-picker--geometry-height geometry))))
+                      (emacs-canvas-color-picker--geometry-height geometry)))
           (let* ((position (posn-at-x-y 50 100 window t))
                  (pixel (posn-x-y position))
                  (edges (window-inside-pixel-edges window)))
@@ -1288,7 +1403,7 @@
       (should (equal refresh-args (list (list canvas nil)))))))
 
 (ert-deftest emacs-canvas-color-picker-test-scale-frame-size ()
-  "Frame dimensions use supplied geometry and one unscaled status row."
+  "Frame dimensions use supplied geometry without a status row."
   (dolist (case '((0.5 158 160) (2.0 632 640)))
     (ert-info ((format "scale %s" (car case)))
       (let* ((emacs-canvas-color-picker-scale (car case))
@@ -1296,7 +1411,7 @@
         (let ((emacs-canvas-color-picker-scale 1.0))
           (cl-letf (((symbol-function 'frame-char-height) (lambda (&optional _frame) 17)))
             (should (equal (emacs-canvas-color-picker--frame-size geometry nil)
-                           (cons (nth 1 case) (+ (nth 2 case) 17 1))))))))))
+                           (cons (nth 1 case) (1+ (nth 2 case)))))))))))
 
 (ert-deftest emacs-canvas-color-picker-test-scale-invalid-values ()
   "Invalid scales and collapsed positive regions fail with an error."

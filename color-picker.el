@@ -122,7 +122,6 @@ The picker keeps its layout proportions at other scale values."
   data
   base-data
   geometry
-  status-marker
   hue
   saturation
   value
@@ -153,8 +152,15 @@ The picker keeps its layout proportions at other scale values."
     (define-key map [down-mouse-1] #'emacs-canvas-color-picker--mouse-down)
     (define-key map [mouse-1] #'emacs-canvas-color-picker--mouse-click)
     (define-key map [drag-mouse-1] #'emacs-canvas-color-picker--mouse-drag)
+    (define-key map (kbd "RET") #'emacs-canvas-color-picker--accept)
+    (define-key map (kbd "C-m") #'emacs-canvas-color-picker--accept)
+    (define-key map (kbd "C-c C-c") #'emacs-canvas-color-picker--accept)
+    (define-key map (kbd "C-g") #'emacs-canvas-color-picker--cancel)
+    (define-key map (kbd "q") #'emacs-canvas-color-picker--cancel)
+    (define-key map (kbd "<escape>") #'emacs-canvas-color-picker--cancel)
+    (define-key map (kbd "C-c C-k") #'emacs-canvas-color-picker--cancel)
     map)
-  "Mouse map attached to the canvas display string.")
+  "Key and mouse map attached to the canvas display string.")
 
 (defun emacs-canvas-color-picker--clamp (value low high)
   "Clamp VALUE between LOW and HIGH."
@@ -630,18 +636,11 @@ native module. Otherwise use the pure Elisp renderer."
     (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--output-text state))))
 
 (defun emacs-canvas-color-picker--update-status (state)
-  "Update the status line for STATE."
+  "Show STATE's color and key hints in the parent frame's echo area."
   (emacs-canvas-color-picker--update-preview state)
-  (when-let* ((marker (emacs-canvas-color-picker--state-status-marker state))
-              (buffer (marker-buffer marker)))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t)
-            (start (marker-position marker)))
-        (save-excursion
-          (goto-char start)
-          (delete-region start (line-end-position))
-          (insert (emacs-canvas-color-picker--status-text state))
-          (set-marker marker start buffer))))))
+  (let ((parent (emacs-canvas-color-picker--state-parent-frame state)))
+    (with-selected-frame (if (frame-live-p parent) parent (selected-frame))
+      (message "%s" (emacs-canvas-color-picker--status-text state)))))
 
 (defun emacs-canvas-color-picker--native-refresh (state rebuild-base)
   "Refresh STATE through native rendering when possible."
@@ -769,10 +768,6 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
   (when-let* ((coordinates (emacs-canvas-color-picker--event-coordinates event)))
     (emacs-canvas-color-picker--handle-coordinates state coordinates)))
 
-(defun emacs-canvas-color-picker--status-pixel-height (window)
-  "Return the status line height in pixels for WINDOW."
-  (frame-char-height (window-frame window)))
-
 (defun emacs-canvas-color-picker--current-pointer-coordinates (window)
   "Return current mouse coordinates relative to the picker canvas in WINDOW."
   (when (and (window-live-p window)
@@ -803,7 +798,7 @@ When REBUILD-BASE is non-nil, regenerate the marker-free base palette."
                                    (numberp left)
                                    (numberp top))
                           (cons (- x left)
-                                (- y top (emacs-canvas-color-picker--status-pixel-height window))))))
+                                (- y top)))))
       (emacs-canvas-color-picker--trace
        "current-pointer"
        :raw mouse
@@ -961,20 +956,15 @@ Return the current coordinates when they are available."
                          (define-key map (kbd "<escape>") #'emacs-canvas-color-picker--cancel)
                          (define-key map (kbd "C-c C-k") #'emacs-canvas-color-picker--cancel)
                          map))
-        (let ((status-start (point)))
-          (insert (emacs-canvas-color-picker--status-text state) "\n")
-          (setf (emacs-canvas-color-picker--state-status-marker state)
-                (copy-marker status-start nil)))
         (insert (emacs-canvas-color-picker--display-string canvas))
         (goto-char (point-min))
         (setq buffer-read-only t)
         (set-buffer-modified-p nil)))))
 
-(defun emacs-canvas-color-picker--frame-size (geometry parent-frame)
-  "Return child-frame pixel size for GEOMETRY and PARENT-FRAME."
+(defun emacs-canvas-color-picker--frame-size (geometry _parent-frame)
+  "Return child-frame pixel size for GEOMETRY."
   (cons (emacs-canvas-color-picker--geometry-width geometry)
         (+ (emacs-canvas-color-picker--geometry-height geometry)
-           (frame-char-height parent-frame)
            ;; The child frame can be one pixel shorter than its requested height.
            1)))
 
@@ -1059,8 +1049,7 @@ Return the current coordinates when they are available."
   "Fit STATE's canvas inside its window while preserving its HSV values."
   (let* ((window (emacs-canvas-color-picker--state-window state))
          (width (window-body-width window t))
-         (height (- (window-body-height window t)
-                    (emacs-canvas-color-picker--status-pixel-height window)))
+         (height (window-body-height window t))
          (low 0.1)
          (high (max low (min (/ (float width) 316.0)
                              (/ (float height) 320.0))))
