@@ -382,6 +382,104 @@
       (should (string-match-p "RET" status))
       (should (string-match-p "q" status)))))
 
+(ert-deftest emacs-canvas-color-picker-test-format-preview-read-color ()
+  "The read-color preview and callback use the same requested format."
+  (dolist (case '((nil "#ff0000")
+                  (css-rgb "#ff0000")
+                  (css-rgba "#ff0000ff")
+                  (emacs-argb "#xffff0000")
+                  (emacs-rgb "#xff0000")
+                  (c-rgb "0xff0000")))
+    (ert-info ((format "format %S" (car case)))
+      (let (preview received)
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+                   (lambda (state)
+                     (setq preview (emacs-canvas-color-picker--status-text state))
+                     (cl-letf (((symbol-function 'emacs-canvas-color-picker--cleanup) #'ignore))
+                       (emacs-canvas-color-picker--accept state)))))
+          (emacs-canvas-color-picker-read-color
+           (lambda (value) (setq received value)) "#ff0000" nil (car case)))
+        (should (equal received (cadr case)))
+        (should (string-prefix-p (concat received "    RET") preview))))))
+
+(ert-deftest emacs-canvas-color-picker-test-format-preview-read-color-existing-arguments ()
+  "Existing read-color calls retain the default callback and display format."
+  (let (received)
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+               (lambda (state)
+                 (should (eq (emacs-canvas-color-picker--state-display state) 'buffer))
+                 (should (string-prefix-p "#ff0000    RET"
+                                          (emacs-canvas-color-picker--status-text state)))
+                 (cl-letf (((symbol-function 'emacs-canvas-color-picker--cleanup) #'ignore))
+                   (emacs-canvas-color-picker--accept state)))))
+      (emacs-canvas-color-picker-read-color
+       (lambda (text) (setq received text)) "#ff0000" 'buffer))
+    (should (equal received "#ff0000"))))
+
+(ert-deftest emacs-canvas-color-picker-test-format-preview-invalid-before-open ()
+  "An invalid read-color output format fails before state allocation."
+  (let ((allocated nil))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--make-state)
+               (lambda (&rest _args) (setq allocated t))))
+      (should-error (emacs-canvas-color-picker-read-color #'ignore nil nil 'bare))
+      (should-not allocated))))
+
+(ert-deftest emacs-canvas-color-picker-test-format-preview-updates-status ()
+  "A changed color updates the status row in its requested output format."
+  (with-temp-buffer
+    (let ((state (emacs-canvas-color-picker--state-create
+                  :buffer (current-buffer)
+                  :canvas '(image :type canvas :id test)
+                  :output-format 'emacs-argb
+                  :hue 0.0 :saturation 1.0 :value 1.0)))
+      (emacs-canvas-color-picker--setup-buffer state)
+      (should (string-prefix-p "#xffff0000    RET" (buffer-string)))
+      (setf (emacs-canvas-color-picker--state-hue state) (/ 1.0 3.0))
+      (emacs-canvas-color-picker--update-status state)
+      (should (string-prefix-p "#xff00ff00    RET" (buffer-string))))))
+
+(ert-deftest emacs-canvas-color-picker-test-format-preview-copy-and-insert ()
+  "Copy and insert show and emit the selected output format."
+  (dolist (command '(emacs-canvas-color-picker-copy emacs-canvas-color-picker-insert))
+    (dolist (case '((nil "#ff0000") (css-rgba "#ff0000ff")
+                    (emacs-argb "#xffff0000") (emacs-rgb "#xff0000")
+                    (c-rgb "0xff0000")))
+      (ert-info ((format "%S %S" command (car case)))
+        (with-temp-buffer
+          (let ((kill-ring nil) (kill-ring-yank-pointer nil) (preview nil))
+            (cl-letf (((symbol-function 'emacs-canvas-color-picker--open-state)
+                       (lambda (state)
+                         (setq preview (emacs-canvas-color-picker--status-text state))
+                         (cl-letf (((symbol-function 'emacs-canvas-color-picker--cleanup) #'ignore))
+                           (emacs-canvas-color-picker--accept state)))))
+              (funcall command "#ff0000" (car case) 'buffer))
+            (should (string-prefix-p (concat (cadr case) "    RET") preview))
+            (should (equal (if (eq command 'emacs-canvas-color-picker-copy)
+                               (car kill-ring)
+                             (buffer-string))
+                           (cadr case)))))))))
+
+(ert-deftest emacs-canvas-color-picker-test-format-preview-at-point ()
+  "At-point preview matches replacement and retains original alpha text."
+  (dolist (case '(("112233" "ff0000") ("#112233" "#ff0000")
+                  ("#112233aF" "#ff0000aF") ("#xAf112233" "#xAfff0000")
+                  ("#x112233" "#xff0000") ("0x112233" "0xff0000")
+                  ("word" "wo#ff0000rd")))
+    (ert-info ((car case))
+      (with-temp-buffer
+        (insert (car case))
+        (goto-char (+ (point-min) (if (equal (car case) "word") 2 3)))
+        (let ((state (emacs-canvas-color-picker--make-at-point-state (current-buffer))))
+          (setf (emacs-canvas-color-picker--state-hue state) 0.0
+                (emacs-canvas-color-picker--state-saturation state) 1.0
+                (emacs-canvas-color-picker--state-value state) 1.0)
+          (should (string-prefix-p
+                   (concat (if (equal (car case) "word") "#ff0000" (cadr case)) "    RET")
+                   (emacs-canvas-color-picker--status-text state)))
+          (cl-letf (((symbol-function 'emacs-canvas-color-picker--cleanup) #'ignore))
+            (emacs-canvas-color-picker--accept state))
+          (should (equal (buffer-string) (cadr case))))))))
+
 (ert-deftest emacs-canvas-color-picker-test-update-status-replaces-existing-line ()
   "Status updates replace the existing line instead of appending text."
   (with-temp-buffer
@@ -1227,7 +1325,11 @@
     (insert "00ff00")
     (goto-char 3)
     (let ((state (emacs-canvas-color-picker--make-at-point-state (current-buffer))))
-      (funcall (emacs-canvas-color-picker--state-callback state) "#ff0000")
+      (setf (emacs-canvas-color-picker--state-hue state) 0.0
+            (emacs-canvas-color-picker--state-saturation state) 1.0
+            (emacs-canvas-color-picker--state-value state) 1.0)
+      (funcall (emacs-canvas-color-picker--state-callback state)
+               (emacs-canvas-color-picker--output-text state))
       (should (equal (buffer-string) "ff0000")))))
 
 (ert-deftest emacs-canvas-color-picker-test-at-point-inserts-when-no-color ()
@@ -1267,7 +1369,12 @@
                    (emacs-canvas-color-picker--state-saturation state) (nth 1 hsv)))
           (should (emacs-canvas-color-picker-test--close-to
                    (emacs-canvas-color-picker--state-value state) (nth 2 hsv)))))
-      (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc")
+      (let ((selected (emacs-canvas-color-picker--hex-to-hsv "#aabbcc")))
+        (setf (emacs-canvas-color-picker--state-hue state) (nth 0 selected)
+              (emacs-canvas-color-picker--state-saturation state) (nth 1 selected)
+              (emacs-canvas-color-picker--state-value state) (nth 2 selected)))
+      (funcall (emacs-canvas-color-picker--state-callback state)
+               (emacs-canvas-color-picker--output-text state))
       (should (equal (buffer-string) expected)))))
 
 (ert-deftest emacs-canvas-color-picker-test-at-point-css-rgba-keeps-alpha ()
@@ -1381,9 +1488,10 @@
           (cl-letf (((symbol-function 'emacs-canvas-color-picker-read-color)
                      (lambda (callback &rest args)
                        (setq received args)
-                       (funcall callback "#aabbcc"))))
+                       (funcall callback (emacs-canvas-color-picker--format-hex
+                                          "#aabbcc" (nth 2 args))))))
             (emacs-canvas-color-picker-copy "#DDEEFF" (car case))
-            (should (equal (car received) "#DDEEFF"))
+            (should (equal received (list "#DDEEFF" nil (car case))))
             (should (equal (car kill-ring) (cadr case)))
             (should (equal (buffer-string) "keep"))))))))
 
@@ -1396,9 +1504,10 @@
       (cl-letf (((symbol-function 'emacs-canvas-color-picker-read-color)
                  (lambda (callback &rest args)
                    (setq received args)
-                   (funcall callback "#aabbcc"))))
+                   (funcall callback (emacs-canvas-color-picker--format-hex
+                                      "#aabbcc" (nth 2 args))))))
         (emacs-canvas-color-picker-copy "DDEEFF" 'css-rgba)
-        (should (equal (car received) "DDEEFF"))
+        (should (equal received '("DDEEFF" nil css-rgba)))
         (should (equal (car kill-ring) "#aabbccff"))))))
 
 (ert-deftest emacs-canvas-color-picker-test-insert-output-formats ()
@@ -1424,7 +1533,9 @@
                                 (emacs-canvas-color-picker--state-saturation state) (nth 1 initial-hsv)))
                        (should (emacs-canvas-color-picker-test--close-to
                                 (emacs-canvas-color-picker--state-value state) (nth 2 initial-hsv)))
-                       (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc"))))
+                       (funcall (emacs-canvas-color-picker--state-callback state)
+                                (emacs-canvas-color-picker--format-hex
+                                 "#aabbcc" (emacs-canvas-color-picker--state-output-format state))))))
             (emacs-canvas-color-picker-insert "#DDEEFF" (car case))
             (should (= opened 1))
             (should (equal (buffer-string)
@@ -1438,7 +1549,9 @@
                  (lambda (state)
                    (should (emacs-canvas-color-picker-test--close-to
                             (emacs-canvas-color-picker--state-hue state) (nth 0 initial-hsv)))
-                   (funcall (emacs-canvas-color-picker--state-callback state) "#aabbcc"))))
+                   (funcall (emacs-canvas-color-picker--state-callback state)
+                            (emacs-canvas-color-picker--format-hex
+                             "#aabbcc" (emacs-canvas-color-picker--state-output-format state))))))
         (emacs-canvas-color-picker-insert "DDEEFF" 'css-rgba)
         (should (equal (buffer-string) "#aabbccff"))))))
 

@@ -126,6 +126,8 @@ The picker keeps its layout proportions at other scale values."
   initial-saturation
   initial-value
   callback
+  output-format
+  output-alpha
   replace-start
   replace-end
   replace-prefixed
@@ -582,9 +584,16 @@ native module. Otherwise use the pure Elisp renderer."
           (emacs-canvas-color-picker--state-saturation state)
           (emacs-canvas-color-picker--state-value state))))
 
+(defun emacs-canvas-color-picker--output-text (state)
+  "Return the selected color in STATE's output format."
+  (emacs-canvas-color-picker--format-hex
+   (emacs-canvas-color-picker--current-hex state)
+   (emacs-canvas-color-picker--state-output-format state)
+   (emacs-canvas-color-picker--state-output-alpha state)))
+
 (defun emacs-canvas-color-picker--status-text (state)
   "Return status text for STATE."
-  (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--current-hex state)))
+  (format "%s    RET accept, q cancel" (emacs-canvas-color-picker--output-text state)))
 
 (defun emacs-canvas-color-picker--update-status (state)
   "Update the status line for STATE."
@@ -792,9 +801,9 @@ Return the current coordinates when they are available."
     (when (and state (not (emacs-canvas-color-picker--state-done state)))
       (setf (emacs-canvas-color-picker--state-done state) t)
       (let ((callback (emacs-canvas-color-picker--state-callback state))
-            (hex (emacs-canvas-color-picker--current-hex state)))
+            (text (emacs-canvas-color-picker--output-text state)))
         (emacs-canvas-color-picker--cleanup state)
-        (funcall callback hex)))))
+        (funcall callback text)))))
 
 (defun emacs-canvas-color-picker--cancel (&optional state)
   "Cancel color picker STATE."
@@ -1098,7 +1107,7 @@ Return the current coordinates when they are available."
      (emacs-canvas-color-picker--cleanup state)
      (signal (car err) (cdr err)))))
 
-(defun emacs-canvas-color-picker--make-state (callback &optional initial-color buffer display)
+(defun emacs-canvas-color-picker--make-state (callback &optional initial-color buffer display output-format output-alpha)
   "Return a new picker state for CALLBACK and INITIAL-COLOR."
   (unless (functionp callback)
     (error "Callback must be callable"))
@@ -1140,16 +1149,20 @@ Return the current coordinates when they are available."
      :initial-saturation (nth 1 hsv)
      :initial-value (nth 2 hsv)
      :callback callback
+     :output-format output-format
+     :output-alpha output-alpha
      :done nil)))
 
 ;;;###autoload
-(defun emacs-canvas-color-picker-read-color (callback &optional initial-color display)
+(defun emacs-canvas-color-picker-read-color (callback &optional initial-color display output-format)
   "Open a canvas color picker and call CALLBACK with the selected color.
 
 INITIAL-COLOR, when non-nil, must be a string in #RRGGBB or RRGGBB form.
-DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
+DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil.
+OUTPUT-FORMAT selects the callback and preview format; nil uses `css-rgb'."
+  (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker--open-state
-   (emacs-canvas-color-picker--make-state callback initial-color nil display)))
+   (emacs-canvas-color-picker--make-state callback initial-color nil display output-format)))
 
 (defun emacs-canvas-color-picker--hex-token-char-p (char)
   "Return non-nil when CHAR belongs to an alphanumeric token."
@@ -1223,14 +1236,14 @@ DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
   "Return insert-only picker state for TARGET-BUFFER."
   (let ((marker (copy-marker (point) t)))
     (emacs-canvas-color-picker--make-state
-     (lambda (hex)
+     (lambda (text)
        (when (buffer-live-p target-buffer)
          (with-current-buffer target-buffer
            (save-excursion
              (goto-char marker)
-             (insert (emacs-canvas-color-picker--format-hex hex output-format)))))
+             (insert text))))
        (set-marker marker nil))
-     initial-color nil display)))
+     initial-color nil display output-format)))
 
 (defun emacs-canvas-color-picker--make-at-point-state (target-buffer &optional display)
   "Return at-point picker state for TARGET-BUFFER."
@@ -1238,7 +1251,7 @@ DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
          (initial-color (and match (plist-get match :rgb)))
          (insert-marker (copy-marker (point) t))
          (state (emacs-canvas-color-picker--make-state
-                 (lambda (hex)
+                 (lambda (text)
                    (when (buffer-live-p target-buffer)
                      (with-current-buffer target-buffer
                        (save-excursion
@@ -1246,13 +1259,13 @@ DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
                              (progn
                                (goto-char (plist-get match :start))
                                (delete-region (plist-get match :start) (plist-get match :end))
-                               (insert (emacs-canvas-color-picker--format-hex
-                                        hex (plist-get match :format)
-                                        (plist-get match :alpha))))
+                               (insert text))
                            (goto-char insert-marker)
-                           (insert hex)))))
+                           (insert text)))))
                    (set-marker insert-marker nil))
-                 initial-color nil display)))
+                 initial-color nil display
+                 (and match (plist-get match :format))
+                 (and match (plist-get match :alpha)))))
     (when match
       (setf (emacs-canvas-color-picker--state-replace-start state) (plist-get match :start)
             (emacs-canvas-color-picker--state-replace-end state) (plist-get match :end)
@@ -1270,11 +1283,10 @@ DISPLAY overrides `emacs-canvas-color-picker-display' when non-nil."
   (interactive)
   (emacs-canvas-color-picker--validate-output-format output-format)
   (emacs-canvas-color-picker-read-color
-   (lambda (hex)
-     (let ((formatted (emacs-canvas-color-picker--format-hex hex output-format)))
-       (kill-new formatted)
-       (message "Copied color %s" formatted)))
-   initial-color display))
+   (lambda (text)
+     (kill-new text)
+     (message "Copied color %s" text))
+   initial-color display output-format))
 
 ;;;###autoload
 (defun emacs-canvas-color-picker-insert (&optional initial-color output-format display)
