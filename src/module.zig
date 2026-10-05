@@ -1,6 +1,11 @@
 const std = @import("std");
 const c = @import("emacs_module");
 
+comptime {
+    if (!@hasField(c.emacs_env, "canvas_data"))
+        @compileError("emacs-module.h must provide the Emacs 32 canvas_data API");
+}
+
 export var plugin_is_GPL_compatible: c_int = 1;
 
 const background: u32 = 0xFF4D4D4D;

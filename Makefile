@@ -1,8 +1,10 @@
 PROJECT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+-include $(PROJECT_DIR)/local.mk
+
 EMACS ?= emacs
 ZIG ?= zig
-EMACS_SOURCE_DIR ?= $(HOME)/git/emacs-source
 ZIG_OPTIMIZE ?= ReleaseFast
+EMACS_HEADER_FLAGS = $(if $(EMACS_INCLUDE_DIR),-Demacs-include-dir="$(EMACS_INCLUDE_DIR)",$(if $(EMACS_BIN_DIR),-Demacs-bin-dir="$(EMACS_BIN_DIR)",))
 COLOR_PICKER_TRACE_FILE ?= /tmp/color-picker-trace.log
 COLOR_PICKER_BENCHMARK_SIZES ?= 64x64 128x128 256x256
 COLOR_PICKER_BENCHMARK_ITERATIONS ?= 50
@@ -19,7 +21,7 @@ help:
 		'make native-benchmark   Build and benchmark the native renderer'
 
 build:
-	"$(ZIG)" build -Doptimize=$(ZIG_OPTIMIZE) -Demacs-source-dir="$(EMACS_SOURCE_DIR)"
+	"$(ZIG)" build -Doptimize=$(ZIG_OPTIMIZE) $(EMACS_HEADER_FLAGS)
 
 test:
 	"$(EMACS)" --batch -Q --eval '(setq load-prefer-newer t)' -L "$(PROJECT_DIR)" -l "$(PROJECT_DIR)/color-picker-test.el" -f ert-run-tests-batch-and-exit

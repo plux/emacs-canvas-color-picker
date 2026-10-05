@@ -1,15 +1,26 @@
 # Emacs canvas color picker
 
-This color picker uses Emacs Lisp for input, color conversion, and previews. A Zig dynamic module draws its canvas pixels. It requires a graphical Emacs 32 build with canvas image support, Zig, and the Emacs source tree that provides `src/emacs-module.h`. The repository includes the GPL-3.0 license in `LICENSE`.
+This color picker uses Emacs Lisp for input, color conversion, and previews. A Zig dynamic module draws its canvas pixels. It requires a graphical Emacs 32 build with canvas image support, Zig, and an Emacs 32 `emacs-module.h` header with `canvas_data`. The repository includes the GPL-3.0 license in `LICENSE`.
 
 ## Build and run
 
-Set `EMACS_SOURCE_DIR` to your Emacs source tree. Set `EMACS` and `ZIG` if their defaults are not suitable:
+Set `EMACS_INCLUDE_DIR` to the directory with `emacs-module.h`. Or set `EMACS_BIN_DIR` to the directory with your Emacs binary. The build searches that directory, `../include`, and `../share/emacs/include` for the header. Source builds that keep `emacs` and `emacs-module.h` together work with `EMACS_BIN_DIR`.
+
+Pass paths on the command line:
 
 ```bash
-make build EMACS_SOURCE_DIR=/path/to/emacs-source
-make run EMACS=/path/to/emacs EMACS_SOURCE_DIR=/path/to/emacs-source
+make build EMACS_INCLUDE_DIR=/path/to/emacs-source/src
+make run EMACS=/path/to/emacs EMACS_BIN_DIR=/path/to/emacs-source/src
 ```
+
+For personal paths, create an ignored `local.mk` in the repository root:
+
+```makefile
+EMACS = /path/to/emacs-source/src/emacs
+EMACS_BIN_DIR = /path/to/emacs-source/src
+```
+
+Then run `make build` and `make run`. `EMACS_INCLUDE_DIR` takes precedence if both header options are set. A system-installed Emacs header from an older version cannot build this canvas module.
 
 The build installs `zig-out/lib/libcolor-picker.so`. The picker loads that file by default. Set `emacs-canvas-color-picker-native-module-file` to a different path if needed. The picker reports an error and cleans up if the module is missing or cannot load. `make run` builds the module before it opens the picker.
 
@@ -31,7 +42,7 @@ Use the mouse on the saturation/value square or the hue strip. The two swatches 
 
 ```bash
 make test EMACS=/path/to/emacs
-make native-benchmark EMACS=/path/to/emacs EMACS_SOURCE_DIR=/path/to/emacs-source
+make native-benchmark EMACS=/path/to/emacs EMACS_INCLUDE_DIR=/path/to/emacs-source/src
 ```
 
 The ERT suite runs in batch Emacs. Its graphical child-frame test skips in batch mode. The benchmark runs native base, marker, and full rendering in batch Emacs. Set `COLOR_PICKER_BENCHMARK_SIZES`, `COLOR_PICKER_BENCHMARK_ITERATIONS`, and `COLOR_PICKER_BENCHMARK_BASE_ITERATIONS` to adjust its run.

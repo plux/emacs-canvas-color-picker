@@ -1,16 +1,37 @@
 const std = @import("std");
 
+var io: std.Io.Threaded = .init_single_threaded;
+
+fn hasEmacsHeader(b: *std.Build, dir: []const u8) bool {
+    const path = b.pathJoin(&.{ dir, "emacs-module.h" });
+    std.Io.Dir.cwd().access(io.io(), path, .{}) catch return false;
+    return true;
+}
+
+fn emacsIncludeDir(b: *std.Build) []const u8 {
+    if (b.option([]const u8, "emacs-include-dir", "Directory containing emacs-module.h")) |dir| {
+        if (hasEmacsHeader(b, dir)) return dir;
+        std.debug.panic("EMACS_INCLUDE_DIR={s} does not contain emacs-module.h", .{dir});
+    }
+    if (b.option([]const u8, "emacs-bin-dir", "Directory containing the Emacs binary")) |bin_dir| {
+        for ([_][]const u8{ bin_dir, b.pathJoin(&.{ bin_dir, "..", "include" }), b.pathJoin(&.{ bin_dir, "..", "share", "emacs", "include" }) }) |dir| {
+            if (hasEmacsHeader(b, dir)) return dir;
+        }
+        std.debug.panic("EMACS_BIN_DIR={s} has no nearby emacs-module.h; set EMACS_INCLUDE_DIR", .{bin_dir});
+    }
+    @panic("Set EMACS_INCLUDE_DIR or EMACS_BIN_DIR (or pass -Demacs-include-dir or -Demacs-bin-dir)");
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const emacs_source_dir = b.option([]const u8, "emacs-source-dir", "Path to the Emacs source tree") orelse
-        @panic("Pass -Demacs-source-dir=/path/to/emacs-source");
+    const include_dir = emacsIncludeDir(b);
     const emacs_module = b.addTranslateC(.{
         .root_source_file = b.path("src/emacs_module_import.h"),
         .target = target,
         .optimize = optimize,
     });
-    emacs_module.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ emacs_source_dir, "src" }) });
+    emacs_module.addIncludePath(.{ .cwd_relative = include_dir });
 
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/module.zig"),
