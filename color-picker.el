@@ -29,7 +29,7 @@ The picker keeps its layout proportions at other scale values."
   :type 'boolean)
 
 (defcustom emacs-canvas-color-picker-native-module-file
-  (expand-file-name "../zig-out/lib/libcolor-picker.so"
+  (expand-file-name "zig-out/lib/libcolor-picker.so"
                     (file-name-directory (or load-file-name buffer-file-name default-directory)))
   "Native module file required for color picker rendering."
   :type 'file)

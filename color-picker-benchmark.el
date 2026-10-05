@@ -72,8 +72,6 @@
 
 (defun emacs-canvas-color-picker-benchmark--maybe-load-native ()
   "Load the required native module."
-  (when-let* ((module-file (getenv "COLOR_PICKER_MODULE_FILE")))
-    (setq emacs-canvas-color-picker-native-module-file module-file))
   (emacs-canvas-color-picker-load-native))
 
 (defun emacs-canvas-color-picker-benchmark--run-size (size)
