@@ -1,5 +1,6 @@
 name: Zig cache experiment
 
+# A branch push tests the cache without a release or a default-branch workflow.
 on:
   push:
     branches:
