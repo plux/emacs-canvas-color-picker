@@ -10,11 +10,11 @@ cp "$project_dir/scripts/test-release-local.sh" "$tmp_dir/scripts/"
 sed -n '/^      - name: Match tag to package version$/,/^      - name: Install verified Zig/{ /^          /s/^          //p; }' \
   "$project_dir/.github/workflows/release.yml" > "$tmp_dir/gate.sh"
 test -s "$tmp_dir/gate.sh"
-(cd "$tmp_dir" && GITHUB_REF_NAME=v0.1.0 bash -e gate.sh)
+(cd "$tmp_dir" && GITHUB_REF_NAME=v0.2.0 bash -e gate.sh)
 
 # Exercise a valid header/tag but a mismatched downloader version.
-sed -i 's/(defconst emacs-canvas-color-picker-version "0.1.0"/(defconst emacs-canvas-color-picker-version "0.2.0"/' "$tmp_dir/color-picker.el"
-if (cd "$tmp_dir" && GITHUB_REF_NAME=v0.1.0 bash -e gate.sh > gate.log 2>&1); then
+sed -i 's/(defconst emacs-canvas-color-picker-version "0.2.0"/(defconst emacs-canvas-color-picker-version "0.3.0"/' "$tmp_dir/color-picker.el"
+if (cd "$tmp_dir" && GITHUB_REF_NAME=v0.2.0 bash -e gate.sh > gate.log 2>&1); then
   echo 'Workflow accepted mismatched release versions' >&2
   exit 1
 fi

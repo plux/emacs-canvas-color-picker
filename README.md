@@ -7,7 +7,6 @@ This color picker uses Emacs Lisp for input, color conversion, and previews. A Z
 - A graphical Emacs 32 build with canvas image support and dynamic module support.
 - Zig 0.17.0 for local builds. Release downloads do not require Zig.
 - GNU Make for the commands below. The optional `make lint` target also requires `zlint` on `PATH`.
-- `curl` for release downloads.
 
 The repository includes `vendor/emacs-module.h` from GNU Emacs 32 source commit `ed1fc1b6be1bb7f9365577527d13b8045b232160`. The header provides `canvas_data`. Its GNU GPL notice remains in the file.
 
@@ -41,9 +40,9 @@ Add this declaration to your Emacs configuration:
              emacs-canvas-color-picker-at-point))
 ```
 
-For local builds, set the include directory to `vendor` or another Emacs 32 header directory. When the module is missing, interactive Emacs offers a release download or a Zig build on Linux x86_64. Other platforms offer the Zig build. Batch Emacs builds locally without a prompt or network request. The picker does not switch methods after a failure. If Zig fails, the picker shows `*color-picker-build*` and leaves no picker open. `make build` remains available for manual builds.
+For local builds, set the include directory to `vendor` or another Emacs 32 header directory. When the module is missing, interactive Emacs offers download, compile, or skip. Linux x86_64 shows the exact release URL; other platforms offer compile or skip. Skip closes the picker without changing the source buffer. Batch Emacs builds locally without a prompt or network request. The picker does not switch methods after a failure. If Zig fails, the picker shows `*color-picker-build*` and leaves no picker open. `make build` remains available for manual builds.
 
-Version `0.1.0` selects only `v0.1.0` release assets named `libcolor-picker-v0.1.0-linux-x86_64.so`, `libcolor-picker-v0.1.0-linux-x86_64.so.sha256`, and `libcolor-picker-v0.1.0-linux-x86_64.so.api`. The download checks the binary checksum and the API metadata against the same bytes before loading. It then checks that the new module registered both native functions and reports live API version `1`. If a check or installation fails after `module-load`, restart Emacs before another attempt. No GitHub release exists yet, so the download choice currently reports that its asset is unavailable. Select the local build instead. A GitHub Actions artifact is not a public release asset.
+Version `0.2.0` selects only `v0.2.0` release assets named `libcolor-picker-v0.2.0-linux-x86_64.so` and `libcolor-picker-v0.2.0-linux-x86_64.so.sha256`. The download checks the binary checksum before loading. It then checks that the new module registered both native functions and reports live API version `1`. If a check or installation fails after `module-load`, restart Emacs before another attempt. No `v0.2.0` release exists yet, so use the local Zig build until that version is published. The published `v0.1.0` release and its three assets, including `.api`, remain unchanged. A GitHub Actions artifact is not a public release asset.
 
 Alternatively, load `color-picker.el` from this directory into a graphical Emacs frame. Use these commands:
 
@@ -89,9 +88,9 @@ For example, set buffer display and disable inline previews with `use-package`:
 
 ## CI artifact and release
 
-The tag workflow builds a Linux x86_64 module and uploads the binary, SHA-256 file, and API metadata file as a GitHub Actions artifact. Keep the `Version:` header and `emacs-canvas-color-picker-version` equal when you change the release version. The workflow and local release test reject a mismatch. The workflow downloads the official Zig 0.17.0 archive and checks its pinned SHA-256. It uses the vendored Emacs 32 header. CI does not build or run Emacs and does not publish a GitHub release. No additional Emacs packages are installed for the artifact build.
+The tag workflow builds a Linux x86_64 module and uploads the binary and SHA-256 file as a GitHub Actions artifact. Keep the `Version:` header and `emacs-canvas-color-picker-version` equal when you change the release version. The workflow and local release test reject a mismatch. The workflow downloads the official Zig 0.17.0 archive and checks its pinned SHA-256. It uses the vendored Emacs 32 header. CI does not build or run Emacs and does not publish a GitHub release. No additional Emacs packages are installed for the artifact build.
 
-A later release needs a separate approval, a successful runner build, and an Emacs 32 runtime check before publication. Publish all three matching files from the artifact under the exact version tag. Test the public URLs, checksum, and API metadata after publication.
+A later release needs a separate approval, a successful runner build, and an Emacs 32 runtime check before publication. Publish both matching files from the artifact under the exact version tag. Test the public URLs, checksum, and picker download after publication.
 
 To test the artifact job locally, install `act`, Docker, and Python 3. Select a reachable Docker context. Then run this command from the repository:
 
@@ -99,7 +98,7 @@ To test the artifact job locally, install `act`, Docker, and Python 3. Select a 
 make test-release-local
 ```
 
-The target runs the workflow in an Ubuntu 24.04 container and checks the local artifact ZIP, checksum, API metadata, and Linux x86_64 module format. It uses local files, including uncommitted changes. An artifact URL printed by `act` is simulated. The command does not create a GitHub tag, artifact, or release. A successful local run does not replace a GitHub runner check.
+The target runs the workflow in an Ubuntu 24.04 container and checks the local artifact ZIP, checksum, and Linux x86_64 module format. It uses local files, including uncommitted changes. An artifact URL printed by `act` is simulated. The command does not create a GitHub tag, artifact, or release. A successful local run does not replace a GitHub runner check.
 
 ## Tests and benchmark
 

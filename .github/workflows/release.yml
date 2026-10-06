@@ -36,9 +36,8 @@ jobs:
           cp zig-out/lib/libcolor-picker.so "$asset"
           sha256sum "$asset" > "$asset.sha256"
           sha256sum --check "$asset.sha256"
-          printf '1 %s\n' "$(sha256sum "$asset" | cut -d ' ' -f 1)" > "$asset.api"
           mkdir -p release-assets
-          mv "$asset" "$asset.sha256" "$asset.api" release-assets/
+          mv "$asset" "$asset.sha256" release-assets/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-x86_64

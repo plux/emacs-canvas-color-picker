@@ -23,6 +23,18 @@
   (fset 'emacs-canvas-color-picker-native-api-version (lambda () 1))
   (fset 'emacs-canvas-color-picker-native-render-full (lambda (&rest _) t)))
 
+(defun emacs-canvas-color-picker-test--http-response (status body &optional location)
+  "Return a binary HTTP response buffer with STATUS, BODY, and LOCATION."
+  (let ((buffer (generate-new-buffer " *color-picker-http-test*")))
+    (with-current-buffer buffer
+      (set-buffer-multibyte nil)
+      (insert (format "HTTP/1.1 %d Test\r\n" status))
+      (when location
+        (insert (format "Location: %s\r\n" location)))
+      (insert "\r\n" body)
+      (setq-local url-http-response-status status))
+    buffer))
+
 (ert-deftest emacs-canvas-color-picker-test-hsv-to-rgb-primary-colors ()
   "HSV conversion returns expected RGB primaries and neutral colors."
   (should (equal (emacs-canvas-color-picker--hsv-to-rgb 0 1 1) '(255 0 0)))
@@ -112,6 +124,78 @@
       (when (file-exists-p emacs-canvas-color-picker-native-module-file)
         (delete-file emacs-canvas-color-picker-native-module-file)))))
 
+(ert-deftest emacs-canvas-color-picker-test-native-choice-skip ()
+  "Skipping installation closes the picker without a build or download."
+  (let ((noninteractive nil)
+        (system-type 'gnu/linux)
+        (system-configuration "x86_64-pc-linux-gnu")
+        (emacs-canvas-color-picker--native-loaded nil)
+        (emacs-canvas-color-picker--native-restart-required nil)
+        (emacs-canvas-color-picker--active-state nil)
+        (emacs-canvas-color-picker--buffer-name " *color-picker-skip-test*")
+        (emacs-canvas-color-picker-native-module-file "/no-such-color-picker-module.so")
+        (chosen nil))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) (ert-fail "Used old install prompt")))
+              ((symbol-function 'read-char-choice)
+               (lambda (prompt choices)
+                 (should (equal choices '(?d ?c ?s)))
+                 (should (string-match-p "v0.2.0" prompt))
+                 (setq chosen t)
+                 ?s))
+              ((symbol-function 'emacs-canvas-color-picker-build-module)
+               (lambda () (ert-fail "Built after skip")))
+              ((symbol-function 'emacs-canvas-color-picker-download-module)
+               (lambda () (ert-fail "Downloaded after skip")))
+              ((symbol-function 'emacs-canvas-color-picker--refresh)
+               (lambda (_) (ert-fail "Rendered after skip")))
+              ((symbol-function 'module-load)
+               (lambda (_) (ert-fail "Loaded after skip"))))
+      (should-not (emacs-canvas-color-picker-read-color #'ignore nil 'buffer))
+      (should chosen)
+      (should-not emacs-canvas-color-picker--active-state)
+      (should-not (get-buffer emacs-canvas-color-picker--buffer-name)))))
+
+(ert-deftest emacs-canvas-color-picker-test-native-choice-skip-child-frame ()
+  "Skipping installation does not leave a new child-frame buffer behind."
+  (let ((noninteractive nil)
+        (system-type 'gnu/linux)
+        (system-configuration "x86_64-pc-linux-gnu")
+        (emacs-canvas-color-picker--native-loaded nil)
+        (emacs-canvas-color-picker--native-restart-required nil)
+        (emacs-canvas-color-picker--active-state nil)
+        (emacs-canvas-color-picker--buffer-name " *color-picker-skip-child-test*")
+        (emacs-canvas-color-picker-native-module-file "/no-such-color-picker-module.so"))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+              ((symbol-function 'read-char-choice) (lambda (&rest _) ?s))
+              ((symbol-function 'emacs-canvas-color-picker-build-module)
+               (lambda () (ert-fail "Built after skip")))
+              ((symbol-function 'emacs-canvas-color-picker-download-module)
+               (lambda () (ert-fail "Downloaded after skip"))))
+      (should-not (emacs-canvas-color-picker-read-color #'ignore nil 'child-frame))
+      (should-not emacs-canvas-color-picker--active-state)
+      (should-not (get-buffer emacs-canvas-color-picker--buffer-name)))))
+
+(ert-deftest emacs-canvas-color-picker-test-native-choice-skip-keeps-existing-buffer ()
+  "Skipping installation preserves an existing child-frame picker buffer."
+  (let* ((emacs-canvas-color-picker--buffer-name " *color-picker-existing-skip-test*")
+         (buffer (get-buffer-create emacs-canvas-color-picker--buffer-name))
+         (noninteractive nil)
+         (system-type 'gnu/linux)
+         (system-configuration "x86_64-pc-linux-gnu")
+         (emacs-canvas-color-picker--native-loaded nil)
+         (emacs-canvas-color-picker--native-restart-required nil)
+         (emacs-canvas-color-picker--active-state nil)
+         (emacs-canvas-color-picker-native-module-file "/no-such-color-picker-module.so"))
+    (unwind-protect
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+                  ((symbol-function 'read-char-choice) (lambda (&rest _) ?s)))
+          (should-not (emacs-canvas-color-picker-read-color #'ignore nil 'child-frame))
+          (should (eq buffer (get-buffer emacs-canvas-color-picker--buffer-name)))
+          (should-not emacs-canvas-color-picker--active-state))
+      (kill-buffer buffer))))
+
 (ert-deftest emacs-canvas-color-picker-test-native-choice-download ()
   "Interactive first use offers a download without starting a build."
   (let* ((noninteractive nil)
@@ -123,11 +207,11 @@
           (concat (make-temp-name (expand-file-name "color-picker-" temporary-file-directory)) ".so"))
          (events nil))
     (unwind-protect
-        (cl-letf (((symbol-function 'completing-read)
-                   (lambda (_prompt choices &rest _)
-                     (should (member "Download release module" choices))
-                     (should (member "Build locally with Zig" choices))
-                     "Download release module"))
+        (cl-letf (((symbol-function 'read-char-choice)
+                   (lambda (prompt choices)
+                     (should (equal choices '(?d ?c ?s)))
+                     (should (string-match-p "v0.2.0" prompt))
+                     ?d))
                   ((symbol-function 'emacs-canvas-color-picker-download-module)
                    (lambda () (push 'download events)
                      (with-temp-file emacs-canvas-color-picker-native-module-file)))
@@ -152,7 +236,7 @@
         (emacs-canvas-color-picker--native-loaded nil)
         (emacs-canvas-color-picker--native-restart-required nil)
         (emacs-canvas-color-picker-native-module-file "/no-such-color-picker-module.so"))
-    (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "Download release module"))
+    (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?d))
               ((symbol-function 'emacs-canvas-color-picker-download-module)
                (lambda () (error "Download failed")))
               ((symbol-function 'emacs-canvas-color-picker-build-module)
@@ -172,11 +256,12 @@
           (emacs-canvas-color-picker-native-module-file
            (concat (make-temp-name (expand-file-name "color-picker-" temporary-file-directory)) ".so")))
       (unwind-protect
-          (cl-letf (((symbol-function 'completing-read)
-                     (lambda (_prompt choices &rest _)
+          (cl-letf (((symbol-function 'read-char-choice)
+                     (lambda (prompt choices)
                        (when noninteractive (ert-fail "Prompted in batch mode"))
-                       (should (equal choices '("Build locally with Zig")))
-                       "Build locally with Zig"))
+                       (should (equal choices '(?c ?s)))
+                       (should-not (string-match-p "\\[d\\]" prompt))
+                       ?c))
                     ((symbol-function 'emacs-canvas-color-picker-download-module)
                      (lambda () (ert-fail "Contacted network")))
                     ((symbol-function 'emacs-canvas-color-picker-build-module)
@@ -189,6 +274,109 @@
         (when (file-exists-p emacs-canvas-color-picker-native-module-file)
           (delete-file emacs-canvas-color-picker-native-module-file))))))
 
+(ert-deftest emacs-canvas-color-picker-test-fetch-asset-binary ()
+  "A successful HTTPS response writes the exact binary body."
+  (let ((path (make-temp-file "picker-fetch-"))
+        (body (unibyte-string 0 255 128 13 10))
+        (requests nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                   (lambda (url &rest _)
+                     (push url requests)
+                     (emacs-canvas-color-picker-test--http-response 200 body)))
+                  ((symbol-function 'call-process)
+                   (lambda (&rest _) (ert-fail "Invoked external curl"))))
+          (emacs-canvas-color-picker--fetch-asset
+           "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.2.0/module.so"
+           path)
+          (should (equal (with-temp-buffer
+                           (set-buffer-multibyte nil)
+                           (insert-file-contents-literally path)
+                           (buffer-string)) body))
+          (should (= (length requests) 1)))
+      (delete-file path))))
+
+(ert-deftest emacs-canvas-color-picker-test-fetch-asset-rejects-http-errors ()
+  "An unavailable or missing response never writes an asset."
+  (dolist (status '(404 nil))
+    (let ((path (make-temp-file "picker-fetch-")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                     (lambda (&rest _)
+                       (when status
+                         (emacs-canvas-color-picker-test--http-response status "not found"))))
+                    ((symbol-function 'call-process)
+                     (lambda (&rest _) (ert-fail "Invoked external curl"))))
+            (should-error
+             (emacs-canvas-color-picker--fetch-asset
+              "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.2.0/module.so"
+              path))
+            (should (= (file-attribute-size (file-attributes path)) 0)))
+        (delete-file path)))))
+
+(ert-deftest emacs-canvas-color-picker-test-fetch-asset-rejects-http-redirect ()
+  "A redirect to HTTP is rejected before its destination is requested."
+  (let ((path (make-temp-file "picker-fetch-"))
+        (requests nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                   (lambda (url &rest _)
+                     (push url requests)
+                     (should (= url-max-redirections 0))
+                     (emacs-canvas-color-picker-test--http-response
+                      302 "" "http://example.com/module.so")))
+                  ((symbol-function 'call-process)
+                   (lambda (&rest _) (ert-fail "Invoked external curl"))))
+          (should-error
+           (emacs-canvas-color-picker--fetch-asset
+            "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.2.0/module.so"
+            path))
+          (should (= (length requests) 1))
+          (should (= (file-attribute-size (file-attributes path)) 0)))
+      (delete-file path))))
+
+(ert-deftest emacs-canvas-color-picker-test-fetch-asset-https-redirect ()
+  "An HTTPS redirect can deliver the asset without losing its bytes."
+  (let ((path (make-temp-file "picker-fetch-"))
+        (requests nil)
+        (body (unibyte-string 0 128 255)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                   (lambda (url &rest _)
+                     (push url requests)
+                     (if (string-match-p "github.com" url)
+                         (emacs-canvas-color-picker-test--http-response
+                          302 "" "https://objects.example.com/module.so")
+                       (emacs-canvas-color-picker-test--http-response 200 body))))
+                  ((symbol-function 'call-process)
+                   (lambda (&rest _) (ert-fail "Invoked external curl"))))
+          (emacs-canvas-color-picker--fetch-asset
+           "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.2.0/module.so"
+           path)
+          (should (= (length requests) 2))
+          (should (equal (with-temp-buffer
+                           (set-buffer-multibyte nil)
+                           (insert-file-contents-literally path)
+                           (buffer-string)) body)))
+      (delete-file path))))
+
+(ert-deftest emacs-canvas-color-picker-test-fetch-asset-rejects-oversize ()
+  "An oversized response cannot write an asset."
+  (let ((path (make-temp-file "picker-fetch-"))
+        (emacs-canvas-color-picker--max-download-bytes 4))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve-synchronously)
+                   (lambda (&rest _)
+                     (emacs-canvas-color-picker-test--http-response 200 "12345")))
+                  ((symbol-function 'call-process)
+                   (lambda (&rest _) (ert-fail "Invoked external curl"))))
+          (should-error
+           (emacs-canvas-color-picker--fetch-asset
+            "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.2.0/module.so"
+            path))
+          (should (= (file-attribute-size (file-attributes path)) 0)))
+      (delete-file path))))
+
 (ert-deftest emacs-canvas-color-picker-test-native-download-verifies-and-installs ()
   "Install only the exact release asset with a matching checksum."
   (let* ((directory (make-temp-file "picker-install-" t))
@@ -196,25 +384,20 @@
          (emacs-canvas-color-picker-native-module-file destination)
          (emacs-canvas-color-picker--native-loaded nil)
          (emacs-canvas-color-picker--native-restart-required nil)
-         (asset "libcolor-picker-v0.1.0-linux-x86_64.so")
+         (asset "libcolor-picker-v0.2.0-linux-x86_64.so")
          (bytes "native binary fixture")
          (calls nil))
     (unwind-protect
-        (cl-letf (((symbol-function 'call-process)
-                   (lambda (_program _infile _output _display &rest args)
-                     (let ((url (car (last args)))
-                           (path (cadr (member "--output" args))))
-                       (push url calls)
-                       (should (string-prefix-p "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.1.0/" url))
-                       (with-temp-file path
-                         (set-buffer-multibyte nil)
-                         (insert (cond ((string-suffix-p ".sha256" url)
-                                        (format "%s  %s\n" (secure-hash 'sha256 bytes) asset))
-                                       ((string-suffix-p ".api" url)
-                                        (format "1 %s\n" (secure-hash 'sha256 bytes)))
-                                       (t bytes))))
-                       0)))
-                  ((symbol-function 'executable-find) (lambda (_) "/usr/bin/curl"))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
+                   (lambda (url path)
+                     (push url calls)
+                     (should (string-prefix-p "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.2.0/" url))
+                     (should-not (string-suffix-p ".api" url))
+                     (with-temp-file path
+                       (set-buffer-multibyte nil)
+                       (insert (if (string-suffix-p ".sha256" url)
+                                   (format "%s  %s\n" (secure-hash 'sha256 bytes) asset)
+                                 bytes)))))
                   ((symbol-function 'module-load)
                    (lambda (path)
                      (should (file-exists-p path))
@@ -225,7 +408,7 @@
                   ((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest _) t)))
           (should (emacs-canvas-color-picker-download-module))
           (should (equal (with-temp-buffer (insert-file-contents-literally destination) (buffer-string)) bytes))
-          (should (= (length calls) 3)))
+          (should (= (length calls) 2)))
       (when (file-exists-p destination) (delete-file destination))
       (delete-directory directory))))
 
@@ -235,15 +418,14 @@
     (let ((destination (concat (make-temp-name (expand-file-name "picker-install-" temporary-file-directory)) ".so"))
           (emacs-canvas-color-picker-native-module-file nil))
       (setq emacs-canvas-color-picker-native-module-file destination)
-      (cl-letf (((symbol-function 'executable-find) (lambda (_) "/usr/bin/curl"))
-                ((symbol-function 'call-process)
-                 (lambda (_program _infile _output _display &rest args)
-                   (let ((path (cadr (member "--output" args))))
-                     (with-temp-file path
-                       (insert (if (string-suffix-p ".sha256" (car (last args)))
-                                   (format "%s  libcolor-picker-v0.1.0-linux-x86_64.so\n" (make-string 64 ?0))
-                                 "wrong content")))
-                     (if (eq response 'unavailable) 22 0)))))
+      (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
+                 (lambda (url path)
+                   (when (eq response 'unavailable)
+                     (error "Release unavailable"))
+                   (with-temp-file path
+                     (insert (if (string-suffix-p ".sha256" url)
+                                 (format "%s  libcolor-picker-v0.2.0-linux-x86_64.so\n" (make-string 64 ?0))
+                               "wrong content"))))))
         (should-error (emacs-canvas-color-picker-download-module) :type 'error)
         (should-not (file-exists-p destination))))))
 
@@ -257,7 +439,7 @@
         (emacs-canvas-color-picker-native-module-file
          (concat (make-temp-name (expand-file-name "picker-build-" temporary-file-directory)) ".so")))
     (unwind-protect
-        (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "Build locally with Zig"))
+        (cl-letf (((symbol-function 'read-char-choice) (lambda (&rest _) ?c))
                   ((symbol-function 'emacs-canvas-color-picker-download-module)
                    (lambda () (ert-fail "Downloaded instead of building")))
                   ((symbol-function 'emacs-canvas-color-picker-build-module)
@@ -277,12 +459,8 @@
         (emacs-canvas-color-picker--native-loaded nil)
         (emacs-canvas-color-picker--native-restart-required nil)
         (emacs-canvas-color-picker--max-download-bytes 100))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_) "/usr/bin/curl"))
-              ((symbol-function 'call-process)
-               (lambda (_program _infile _output _display &rest args)
-                 (with-temp-file (cadr (member "--output" args))
-                   (insert (make-string 101 ?x)))
-                 0))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
+               (lambda (_url _path) (error "Release asset exceeds size limit")))
               ((symbol-function 'module-load) (lambda (_) (ert-fail "Loaded oversized response"))))
       (should-error (emacs-canvas-color-picker-download-module))
       (should-not (file-exists-p emacs-canvas-color-picker-native-module-file)))))
@@ -292,7 +470,8 @@
   (let ((emacs-canvas-color-picker-native-module-file
          (make-temp-file "picker-existing-" nil ".so")))
     (unwind-protect
-        (cl-letf (((symbol-function 'call-process) (lambda (&rest _) (ert-fail "Contacted network"))))
+        (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
+                   (lambda (&rest _) (ert-fail "Contacted network"))))
           (should-error (emacs-canvas-color-picker-download-module) :type 'user-error)
           (should (file-exists-p emacs-canvas-color-picker-native-module-file)))
       (delete-file emacs-canvas-color-picker-native-module-file))))
@@ -303,71 +482,19 @@
          (emacs-canvas-color-picker-native-module-file destination)
          (emacs-canvas-color-picker--native-loaded nil)
          (emacs-canvas-color-picker--native-restart-required nil)
-         (asset "libcolor-picker-v0.1.0-linux-x86_64.so")
+         (asset "libcolor-picker-v0.2.0-linux-x86_64.so")
          (bytes "incompatible fixture"))
-    (cl-letf (((symbol-function 'executable-find) (lambda (_) "/usr/bin/curl"))
-              ((symbol-function 'call-process)
-               (lambda (_program _infile _output _display &rest args)
-                 (with-temp-file (cadr (member "--output" args))
-                   (insert (cond ((string-suffix-p ".sha256" (car (last args)))
-                                  (format "%s  %s\n" (secure-hash 'sha256 bytes) asset))
-                                 ((string-suffix-p ".api" (car (last args)))
-                                  (format "1 %s\n" (secure-hash 'sha256 bytes)))
-                                 (t bytes))))
-                 0))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
+               (lambda (url path)
+                 (with-temp-file path
+                   (insert (if (string-suffix-p ".sha256" url)
+                               (format "%s  %s\n" (secure-hash 'sha256 bytes) asset)
+                             bytes)))))
               ((symbol-function 'module-load) #'ignore)
               ((symbol-function 'emacs-canvas-color-picker-native-api-version) (lambda () 2))
               ((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest _) t)))
       (should-error (emacs-canvas-color-picker-download-module))
       (should-not (file-exists-p destination)))))
-
-(ert-deftest emacs-canvas-color-picker-test-native-download-rejects-api-before-load ()
-  "A mismatched release API never maps the downloaded module."
-  (let* ((emacs-canvas-color-picker--native-loaded nil)
-         (emacs-canvas-color-picker--native-restart-required nil)
-         (emacs-canvas-color-picker-native-module-file
-          (expand-file-name "module.so" (make-temp-file "picker-api-" t)))
-         (asset "libcolor-picker-v0.1.0-linux-x86_64.so")
-         (bytes "native fixture")
-         (loads 0))
-    (unwind-protect
-        (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
-                   (lambda (url path)
-                     (with-temp-file path
-                       (insert (cond ((string-suffix-p ".sha256" url)
-                                      (format "%s  %s\n" (secure-hash 'sha256 bytes) asset))
-                                     ((string-suffix-p ".api" url)
-                                      (format "2 %s\n" (secure-hash 'sha256 bytes)))
-                                     (t bytes))))))
-                  ((symbol-function 'module-load) (lambda (_) (cl-incf loads))))
-          (should-error (emacs-canvas-color-picker-download-module))
-          (should (= loads 0))
-          (should-not (file-exists-p emacs-canvas-color-picker-native-module-file)))
-      (delete-directory (file-name-directory emacs-canvas-color-picker-native-module-file)))))
-
-(ert-deftest emacs-canvas-color-picker-test-native-download-rejects-metadata-hash ()
-  "Release metadata must match the verified binary before module-load."
-  (let* ((emacs-canvas-color-picker--native-loaded nil)
-         (emacs-canvas-color-picker--native-restart-required nil)
-         (emacs-canvas-color-picker-native-module-file
-          (expand-file-name "module.so" (make-temp-file "picker-api-" t)))
-         (asset "libcolor-picker-v0.1.0-linux-x86_64.so")
-         (bytes "native fixture")
-         (loads 0))
-    (unwind-protect
-        (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
-                   (lambda (url path)
-                     (with-temp-file path
-                       (insert (cond ((string-suffix-p ".sha256" url)
-                                      (format "%s  %s\n" (secure-hash 'sha256 bytes) asset))
-                                     ((string-suffix-p ".api" url)
-                                      (format "1 %s\n" (make-string 64 ?0)))
-                                     (t bytes))))))
-                  ((symbol-function 'module-load) (lambda (_) (cl-incf loads))))
-          (should-error (emacs-canvas-color-picker-download-module))
-          (should (= loads 0))
-          (should-not (file-exists-p emacs-canvas-color-picker-native-module-file)))
-      (delete-directory (file-name-directory emacs-canvas-color-picker-native-module-file)))))
 
 (ert-deftest emacs-canvas-color-picker-test-native-download-post-load-requires-restart ()
   "A live API mismatch prevents retry in the same Emacs session."
@@ -375,22 +502,25 @@
          (emacs-canvas-color-picker--native-restart-required nil)
          (emacs-canvas-color-picker-native-module-file
           (expand-file-name "module.so" (make-temp-file "picker-api-" t)))
-         (asset "libcolor-picker-v0.1.0-linux-x86_64.so")
+         (asset "libcolor-picker-v0.2.0-linux-x86_64.so")
          (bytes "native fixture")
          (loads 0))
     (unwind-protect
         (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
                    (lambda (url path)
                      (with-temp-file path
-                       (insert (cond ((string-suffix-p ".sha256" url)
-                                      (format "%s  %s\n" (secure-hash 'sha256 bytes) asset))
-                                     ((string-suffix-p ".api" url)
-                                      (format "1 %s\n" (secure-hash 'sha256 bytes)))
-                                     (t bytes))))))
-                  ((symbol-function 'module-load) (lambda (_) (cl-incf loads)))
-                  ((symbol-function 'emacs-canvas-color-picker-native-api-version) (lambda () 2))
+                       (insert (if (string-suffix-p ".sha256" url)
+                                   (format "%s  %s\n" (secure-hash 'sha256 bytes) asset)
+                                 bytes)))))
+                  ((symbol-function 'module-load)
+                   (lambda (_)
+                     (cl-incf loads)
+                     (fset 'emacs-canvas-color-picker-native-api-version (lambda () 2))
+                     (fset 'emacs-canvas-color-picker-native-render-full (lambda (&rest _) t))))
+                  ((symbol-function 'emacs-canvas-color-picker-native-api-version) (lambda () 1))
                   ((symbol-function 'emacs-canvas-color-picker-native-render-full) (lambda (&rest _) t)))
           (let ((error (should-error (emacs-canvas-color-picker-download-module))))
+            (should (string-match-p "incompatible" (error-message-string error)))
             (should (string-match-p "Restart Emacs" (error-message-string error))))
           (should emacs-canvas-color-picker--native-restart-required)
           (should-error (emacs-canvas-color-picker-load-native) :type 'user-error)
@@ -473,17 +603,15 @@
          (directory (make-temp-file "picker-stale-" t))
          (emacs-canvas-color-picker-native-module-file
           (expand-file-name "module.so" directory))
-         (asset "libcolor-picker-v0.1.0-linux-x86_64.so")
+         (asset "libcolor-picker-v0.2.0-linux-x86_64.so")
          (bytes "native fixture"))
     (unwind-protect
         (cl-letf (((symbol-function 'emacs-canvas-color-picker--fetch-asset)
                    (lambda (url path)
                      (with-temp-file path
-                       (insert (cond ((string-suffix-p ".sha256" url)
-                                      (format "%s  %s\n" (secure-hash 'sha256 bytes) asset))
-                                     ((string-suffix-p ".api" url)
-                                      (format "1 %s\n" (secure-hash 'sha256 bytes)))
-                                     (t bytes))))))
+                       (insert (if (string-suffix-p ".sha256" url)
+                                   (format "%s  %s\n" (secure-hash 'sha256 bytes) asset)
+                                 bytes)))))
                   ((symbol-function 'module-load)
                    (lambda (_)
                      (fset 'emacs-canvas-color-picker-native-api-version (lambda () 1))))

@@ -1,5 +1,5 @@
 ;;; color-picker.el --- Canvas color picker widget -*- lexical-binding: t; -*-
-;; Version: 0.1.0
+;; Version: 0.2.0
 
 ;;; Commentary:
 ;; Elisp color picker UI with native rendering for Emacs 32 canvas images.
@@ -8,9 +8,13 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'url)
+(require 'url-http)
+
+(defvar url-http-response-status)
 
 ;; Keep this value in sync with the Version header for matching release assets.
-(defconst emacs-canvas-color-picker-version "0.1.0"
+(defconst emacs-canvas-color-picker-version "0.2.0"
   "Release version used to select a matching native module.")
 
 (defconst emacs-canvas-color-picker--max-download-bytes (* 1024 1024)
@@ -136,6 +140,7 @@ The picker keeps its layout proportions at other scale values."
   previous-buffer
   created-window
   buffer
+  buffer-created-p
   canvas
   geometry
   hue
@@ -436,20 +441,44 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
     (error "Native color picker module did not register its API and full renderer")))
 
 (defun emacs-canvas-color-picker--fetch-asset (url path)
-  "Fetch HTTPS URL to PATH with a bounded transfer and a successful response."
+  "Fetch HTTPS URL to PATH after checking redirects, status, and body size."
   (unless (string-prefix-p "https://github.com/plux/emacs-canvas-color-picker/releases/download/" url)
     (error "Unexpected release URL"))
-  (unless (executable-find "curl")
-    (error "curl is required to download the native module"))
-  (unless (eq 0 (call-process "curl" nil nil nil "--fail" "--location"
-                              "--proto" "=https" "--proto-redir" "=https"
-                              "--max-time" "30" "--max-filesize"
-                              (number-to-string emacs-canvas-color-picker--max-download-bytes)
-                              "--output" path url))
-    (error "Release asset unavailable or download failed: %s" url))
-  (when (> (file-attribute-size (file-attributes path))
-           emacs-canvas-color-picker--max-download-bytes)
-    (error "Release asset exceeds size limit: %s" url)))
+  (let ((current url)
+        (redirects 0))
+    (catch 'downloaded
+      (while t
+        (unless (string= (url-type (url-generic-parse-url current)) "https")
+          (error "Refusing non-HTTPS release URL: %s" current))
+        (let* ((url-max-redirections 0)
+               (url-request-method "GET")
+               (buffer (url-retrieve-synchronously current t t 30)))
+          (unless buffer
+            (error "Release asset unavailable or download failed: %s" current))
+          (unwind-protect
+              (with-current-buffer buffer
+                (goto-char (point-min))
+                (unless (re-search-forward "\r?\n\r?\n" nil t)
+                  (error "Invalid release response: %s" current))
+                (let ((body-start (point))
+                      (status url-http-response-status))
+                  (cond
+                   ((memq status '(301 302 303 307 308))
+                    (goto-char (point-min))
+                    (unless (re-search-forward "^Location: \\([^\r\n]+\\)\r?$" body-start t)
+                      (error "Release redirect lacks a location: %s" current))
+                    (setq current (url-expand-file-name (match-string 1) current))
+                    (when (> (cl-incf redirects) 5)
+                      (error "Too many release redirects")))
+                   ((eq status 200)
+                    (when (> (- (point-max) body-start)
+                             emacs-canvas-color-picker--max-download-bytes)
+                      (error "Release asset exceeds size limit: %s" current))
+                    (let ((coding-system-for-write 'binary))
+                      (write-region body-start (point-max) path nil 'silent))
+                    (throw 'downloaded t))
+                   (t (error "Release asset unavailable (HTTP %s): %s" status current)))))
+            (kill-buffer buffer)))))))
 
 (defun emacs-canvas-color-picker-download-module ()
   "Install the matching Linux x86_64 release module after verification."
@@ -467,12 +496,10 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
     (let* ((base (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/%s/" tag))
            (temporary (make-temp-file (expand-file-name ".color-picker-module-"
                                                        (file-name-directory destination)) nil ".so"))
-           (checksum (make-temp-file "color-picker-checksum-"))
-           (metadata (make-temp-file "color-picker-api-")))
+           (checksum (make-temp-file "color-picker-checksum-")))
       (unwind-protect
           (progn
             (emacs-canvas-color-picker--fetch-asset (concat base asset ".sha256") checksum)
-            (emacs-canvas-color-picker--fetch-asset (concat base asset ".api") metadata)
             (emacs-canvas-color-picker--fetch-asset (concat base asset) temporary)
             (let* ((expected (with-temp-buffer
                                (insert-file-contents checksum)
@@ -483,20 +510,9 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
                                  (downcase (match-string 1)))))
                    (actual (with-temp-buffer
                              (insert-file-contents-literally temporary)
-                             (secure-hash 'sha256 (current-buffer))))
-                   (api (with-temp-buffer
-                          (insert-file-contents metadata)
-                          (goto-char (point-min))
-                          (when (re-search-forward "\\`\\([0-9]+\\) \\([[:xdigit:]]\\{64\\}\\)\n?\\'" nil t)
-                            (list (string-to-number (match-string 1))
-                                  (downcase (match-string 2)))))))
+                             (secure-hash 'sha256 (current-buffer)))))
               (unless (and expected (string= expected actual))
-                (error "Release module checksum mismatch"))
-              (unless (and api (string= (cadr api) actual))
-                (error "Release module API metadata does not match the binary"))
-              (unless (= (car api) emacs-canvas-color-picker--native-api-version)
-                (error "Release module API %s is incompatible with required API %s"
-                       (car api) emacs-canvas-color-picker--native-api-version)))
+                (error "Release module checksum mismatch")))
             (condition-case error
                 (progn
                   (let ((previous-api (and (fboundp 'emacs-canvas-color-picker-native-api-version)
@@ -515,15 +531,28 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
                       (error-message-string error))))
             t)
         (when (file-exists-p temporary) (delete-file temporary))
-        (when (file-exists-p checksum) (delete-file checksum))
-        (when (file-exists-p metadata) (delete-file metadata))))))
+        (when (file-exists-p checksum) (delete-file checksum))))))
+
+(defun emacs-canvas-color-picker--ask-install-action (asset)
+  "Ask how to install missing ASSET, or return nil to skip."
+  (pcase (read-char-choice
+          (concat "Color picker native module not found.\n\n"
+                  (when asset
+                    (format "  [d] Download pre-built binary from:\n      https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/%s\n"
+                            emacs-canvas-color-picker-version asset))
+                  "  [c] Compile from source via zig build\n"
+                  "  [s] Skip - install manually later\n\nChoice: ")
+          (if asset '(?d ?c ?s) '(?c ?s)))
+    (?d 'download)
+    (?c 'compile)))
 
 (defun emacs-canvas-color-picker-load-native (&optional noerror)
   "Load the native color picker renderer, building it when missing.
 
 When NOERROR is non-nil, return nil instead of signaling load errors."
   (interactive)
-  (condition-case error
+  (catch 'color-picker-skip
+    (condition-case error
       (progn
         (when emacs-canvas-color-picker--native-restart-required
           (user-error "Restart Emacs before loading another native color picker module"))
@@ -532,14 +561,10 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
             (if noninteractive
                 (emacs-canvas-color-picker-build-module)
               (let ((asset (emacs-canvas-color-picker--release-asset)))
-                (if (equal (completing-read "Native module: "
-                                            (if asset
-                                                '("Download release module" "Build locally with Zig")
-                                              '("Build locally with Zig"))
-                                            nil t)
-                           "Download release module")
-                    (emacs-canvas-color-picker-download-module)
-                  (emacs-canvas-color-picker-build-module)))))
+                (pcase (emacs-canvas-color-picker--ask-install-action asset)
+                  ('download (emacs-canvas-color-picker-download-module))
+                  ('compile (emacs-canvas-color-picker-build-module))
+                  (_ (throw 'color-picker-skip nil))))))
           (unless emacs-canvas-color-picker--native-loaded
             (let ((previous-api (and (fboundp 'emacs-canvas-color-picker-native-api-version)
                                      (symbol-function 'emacs-canvas-color-picker-native-api-version)))
@@ -562,7 +587,7 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
                    (if emacs-canvas-color-picker--native-restart-required
                        ". Restart Emacs before retrying"
                      "")))
-     nil)))
+     nil))))
 
 (defun emacs-canvas-color-picker--hex-at-point ()
   "Return a hex color near point, or nil."
@@ -1130,15 +1155,21 @@ Return the current coordinates when they are available."
   (condition-case err
       (progn
         (emacs-canvas-color-picker--ensure-canvas-available)
-        (emacs-canvas-color-picker-load-native)
-        (emacs-canvas-color-picker--refresh state)
-        (emacs-canvas-color-picker--update-preview state)
-        (emacs-canvas-color-picker--setup-buffer state)
-        (if (eq (emacs-canvas-color-picker--state-display state) 'buffer)
-            (emacs-canvas-color-picker--make-window state)
-          (emacs-canvas-color-picker--make-frame state))
-        (emacs-canvas-color-picker--update-status state t)
-        state)
+        (if (not (emacs-canvas-color-picker-load-native))
+            (progn
+              (emacs-canvas-color-picker--cleanup state)
+              (when (and (emacs-canvas-color-picker--state-buffer-created-p state)
+                         (buffer-live-p (emacs-canvas-color-picker--state-buffer state)))
+                (kill-buffer (emacs-canvas-color-picker--state-buffer state)))
+              nil)
+          (emacs-canvas-color-picker--refresh state)
+          (emacs-canvas-color-picker--update-preview state)
+          (emacs-canvas-color-picker--setup-buffer state)
+          (if (eq (emacs-canvas-color-picker--state-display state) 'buffer)
+              (emacs-canvas-color-picker--make-window state)
+            (emacs-canvas-color-picker--make-frame state))
+          (emacs-canvas-color-picker--update-status state t)
+          state))
     (error
      (emacs-canvas-color-picker--cleanup state)
      (signal (car err) (cdr err)))))
@@ -1162,15 +1193,19 @@ Return the current coordinates when they are available."
                                (emacs-canvas-color-picker--geometry-height geometry))
                             emacs-canvas-color-picker--background))
          (canvas (emacs-canvas-color-picker--make-canvas geometry data))
+         (existing (and (eq display 'child-frame)
+                        (get-buffer emacs-canvas-color-picker--buffer-name)))
+         (provided-buffer buffer)
          (buffer (or buffer
                      (if (eq display 'buffer)
                          (generate-new-buffer emacs-canvas-color-picker--buffer-name)
-                       (get-buffer-create emacs-canvas-color-picker--buffer-name)))))
+                       (or existing (get-buffer-create emacs-canvas-color-picker--buffer-name))))))
     (emacs-canvas-color-picker--state-create
      :parent-frame parent-frame
      :parent-window parent-window
      :display display
      :buffer buffer
+     :buffer-created-p (and (eq display 'child-frame) (not existing) (not provided-buffer))
      :canvas canvas
      :geometry geometry
      :hue (nth 0 hsv)

@@ -59,21 +59,18 @@ if source.is_dir():
 
 with zipfile.ZipFile(source) as archive:
     names = archive.namelist()
-    if len(names) != 3 or set(names) != {asset, asset + '.sha256', asset + '.api'}:
+    if len(names) != 2 or set(names) != {asset, asset + '.sha256'}:
         raise SystemExit(f'Unexpected artifact files: {names}')
     if any(info.file_size > 1024 * 1024 for info in archive.infolist()):
         raise SystemExit('Artifact file exceeds 1 MiB')
     module = archive.read(asset)
     checksum = archive.read(asset + '.sha256').decode('ascii')
-    metadata = archive.read(asset + '.api').decode('ascii')
 
 if not re.fullmatch(r'[0-9a-f]{64}  ' + re.escape(asset) + r'\n', checksum):
     raise SystemExit('Invalid artifact checksum file')
 actual = hashlib.sha256(module).hexdigest()
 if checksum[:64] != actual:
     raise SystemExit('Artifact checksum mismatch')
-if metadata != f'1 {actual}\n':
-    raise SystemExit('Artifact API metadata mismatch')
 if module[:4] != b'\x7fELF' or module[4:6] != b'\x02\x01' or module[18:20] != b'\x3e\x00':
     raise SystemExit('Artifact is not a Linux x86_64 ELF module')
 print(f'Validated {source}: {asset} SHA-256 {actual}')
