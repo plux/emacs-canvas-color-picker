@@ -2,11 +2,11 @@
 
 This procedure describes the current Linux x86_64 artifact workflow. Read [VALIDATION.md](VALIDATION.md) for the checks before and after publication.
 
-Starting with `v0.2.0`, release the `.so` module and its `.sha256` checksum. The downloader checks the live native API after it loads the verified module. The published `v0.1.0` release remains unchanged. Its downloader requires the historical `.api` asset.
+For `v0.3.0`, release `canvas-color-picker-module-v0.3.0-linux-x86_64.so` and its `.sha256` checksum. The downloader checks native API `2` after loading. The published `v0.1.0` and `v0.2.0` releases remain unchanged; their native modules do not satisfy the renamed package.
 
 ## Prepare the version
 
-1. Set the `Version:` header and `emacs-canvas-color-picker-version` in `color-picker.el` to the same release version.
+1. Set the `Version:` header and `canvas-color-picker-version` in `canvas-color-picker.el` to the same release version.
 2. Make sure that the tag name is `v` followed by that version. Do not reuse or move a published tag.
 3. Run the package tests and the checks in [VALIDATION.md](VALIDATION.md).
 4. Review the diff, commit the release changes, and push the commit only after approval.
@@ -37,8 +37,8 @@ Get explicit approval before creating the public release. Use the exact files fr
 ```bash
 gh release create v<VERSION> -R plux/emacs-canvas-color-picker \
   --verify-tag --title v<VERSION> --notes-file /path/to/approved-notes.txt \
-  /path/to/libcolor-picker-v<VERSION>-linux-x86_64.so \
-  /path/to/libcolor-picker-v<VERSION>-linux-x86_64.so.sha256
+  /path/to/canvas-color-picker-module-v<VERSION>-linux-x86_64.so \
+  /path/to/canvas-color-picker-module-v<VERSION>-linux-x86_64.so.sha256
 ```
 
-Check the asset names and release text with `gh release view v<VERSION> -R plux/emacs-canvas-color-picker`. Then run the public URL and picker download checks in [VALIDATION.md](VALIDATION.md). The `0.2.0` downloader requires both files at the exact version tag.
+Check the asset names and release text with `gh release view v<VERSION> -R plux/emacs-canvas-color-picker`. Then run the public URL and picker download checks in [VALIDATION.md](VALIDATION.md). The `0.3.0` downloader requires both new-name files at the exact version tag.

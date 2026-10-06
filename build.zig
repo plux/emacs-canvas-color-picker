@@ -38,9 +38,10 @@ pub fn build(b: *std.Build) void {
     root_module.addImport("emacs_module", emacs_module.createModule());
 
     const lib = b.addLibrary(.{
-        .name = "color-picker",
+        .name = "canvas-color-picker-module",
         .linkage = .dynamic,
         .root_module = root_module,
     });
-    b.installArtifact(lib);
+    const install_module = b.addInstallFileWithDir(lib.getEmittedBin(), .lib, "canvas-color-picker-module.so");
+    b.getInstallStep().dependOn(&install_module.step);
 }

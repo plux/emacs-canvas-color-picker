@@ -4,8 +4,8 @@ set -euo pipefail
 project_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$project_dir"
 
-version=$(sed -n 's/^;; Version: \([0-9][0-9.]*\)$/\1/p' color-picker.el)
-download_version=$(sed -n 's/^(defconst emacs-canvas-color-picker-version "\([0-9][0-9.]*\)"$/\1/p' color-picker.el)
+version=$(sed -n 's/^;; Version: \([0-9][0-9.]*\)$/\1/p' canvas-color-picker.el)
+download_version=$(sed -n 's/^(defconst canvas-color-picker-version "\([0-9][0-9.]*\)"$/\1/p' canvas-color-picker.el)
 if [[ -z "$version" || -z "$download_version" ]]; then
   echo 'Cannot read the color picker release versions' >&2
   exit 1
@@ -14,7 +14,7 @@ if [[ "$version" != "$download_version" ]]; then
   echo 'Version header and downloader version differ' >&2
   exit 1
 fi
-asset="libcolor-picker-v${version}-linux-x86_64.so"
+asset="canvas-color-picker-module-v${version}-linux-x86_64.so"
 
 if [[ "${1:-}" == --check-artifact && $# -eq 2 ]]; then
   artifact=$2

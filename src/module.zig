@@ -364,7 +364,7 @@ fn nativeApiVersion(env: [*c]c.emacs_env, nargs: c.ptrdiff_t, args: [*c]c.emacs_
     _ = nargs;
     _ = args;
     _ = data;
-    return env.*.make_integer.?(env, 1);
+    return env.*.make_integer.?(env, 2);
 }
 
 export fn emacs_module_init(runtime: [*c]c.struct_emacs_runtime) c_int {
@@ -377,16 +377,16 @@ export fn emacs_module_init(runtime: [*c]c.struct_emacs_runtime) c_int {
     }
 
     const api_version_fn = env.*.make_function.?(env, 0, 0, nativeApiVersion, "Return the native color picker API version.", null);
-    defalias(env, "emacs-canvas-color-picker-native-api-version", api_version_fn);
+    defalias(env, "canvas-color-picker-native-api-version", api_version_fn);
 
     const render_base_fn = env.*.make_function.?(env, 11, 11, nativeRenderBase, "Render the color picker base palette into a canvas.", null);
-    defalias(env, "emacs-canvas-color-picker-native-render-base", render_base_fn);
+    defalias(env, "canvas-color-picker-native-render-base", render_base_fn);
 
     const render_markers_fn = env.*.make_function.?(env, 13, 13, nativeRenderMarkers, "Render color picker markers into a canvas.", null);
-    defalias(env, "emacs-canvas-color-picker-native-render-markers", render_markers_fn);
+    defalias(env, "canvas-color-picker-native-render-markers", render_markers_fn);
 
     const render_full_fn = env.*.make_function.?(env, 17, 17, nativeRenderFull, "Render the full color picker palette into a canvas.", null);
-    defalias(env, "emacs-canvas-color-picker-native-render-full", render_full_fn);
+    defalias(env, "canvas-color-picker-native-render-full", render_full_fn);
 
     return 0;
 }
