@@ -1,4 +1,6 @@
 ;;; color-picker.el --- Canvas color picker widget -*- lexical-binding: t; -*-
+;; Copyright (c) 2026 Håkan Nilsson
+;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; Version: 0.2.0
 
 ;;; Commentary:

@@ -1,4 +1,6 @@
 ;;; color-picker-test.el --- Tests for canvas color picker -*- lexical-binding: t; -*-
+;; Copyright (c) 2026 Håkan Nilsson
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 (require 'ert)
 (require 'cl-lib)

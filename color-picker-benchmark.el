@@ -1,4 +1,6 @@
 ;;; color-picker-benchmark.el --- Color picker draw benchmark -*- lexical-binding: t; -*-
+;; Copyright (c) 2026 Håkan Nilsson
+;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
 ;; Batch benchmark for native color picker rendering helpers.

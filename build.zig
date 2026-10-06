@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Håkan Nilsson
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 const std = @import("std");
 
 var io: std.Io.Threaded = .init_single_threaded;

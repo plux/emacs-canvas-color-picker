@@ -1,6 +1,6 @@
 # Emacs canvas color picker
 
-This color picker uses Emacs Lisp for input, color conversion, and previews. A Zig dynamic module draws its canvas pixels. The repository includes the GPL-3.0 license in `LICENSE`.
+This color picker uses Emacs Lisp for input, color conversion, and previews. A Zig dynamic module draws its canvas pixels. The project is licensed under GPL-3.0-or-later. The GPLv3 text is in `LICENSE`.
 
 ## Requirements
 
