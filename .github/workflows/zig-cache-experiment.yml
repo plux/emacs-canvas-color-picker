@@ -18,11 +18,12 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
+          cache-key: x86_64-linux-gnu.2.35-baseline
       - name: Build native module with vendored Emacs 32 header
         shell: bash
         run: |
           TIMEFORMAT='Build elapsed: %R seconds'
-          time make build ZIG=zig EMACS_INCLUDE_DIR="$PWD/vendor"
+          time zig build -Doptimize=ReleaseFast -Demacs-include-dir="$PWD/vendor" -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline --summary all
       - name: Package module and checksum
         shell: bash
         run: |
