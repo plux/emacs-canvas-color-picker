@@ -80,19 +80,96 @@
     (should-not (emacs-canvas-color-picker--hit-test geometry 5 1))
     (should-not (emacs-canvas-color-picker--hit-test geometry 99 99))))
 
+(ert-deftest emacs-canvas-color-picker-test-native-builds-missing-module ()
+  "A missing module builds before loading, without displaying a picker."
+  (let* ((emacs-canvas-color-picker--native-loaded nil)
+         (emacs-canvas-color-picker-native-module-file
+          (make-temp-file "color-picker-test-module-" nil ".so"))
+         (events nil))
+    (unwind-protect
+        (progn
+          (delete-file emacs-canvas-color-picker-native-module-file)
+          (cl-letf (((symbol-function 'emacs-canvas-color-picker-build-module)
+                     (lambda ()
+                       (push 'build events)
+                       (with-temp-file emacs-canvas-color-picker-native-module-file)))
+                    ((symbol-function 'module-load)
+                     (lambda (_file) (push 'load events)))
+                    ((symbol-function 'emacs-canvas-color-picker-native-render-full)
+                     (lambda (&rest _) t)))
+            (should (emacs-canvas-color-picker-load-native))
+            (should (equal (reverse events) '(build load)))))
+      (when (file-exists-p emacs-canvas-color-picker-native-module-file)
+        (delete-file emacs-canvas-color-picker-native-module-file)))))
+
+(ert-deftest emacs-canvas-color-picker-test-native-build-uses-configured-header ()
+  "The native build uses the selected Zig command and Emacs header directory."
+  (let ((emacs-canvas-color-picker-zig-command "zig-test")
+        (emacs-canvas-color-picker-emacs-include-dir "/emacs 32/include")
+        (emacs-canvas-color-picker-native-module-file emacs-canvas-color-picker-test--project-dir)
+        (invocation nil))
+    (cl-letf (((symbol-function 'executable-find) (lambda (_command) "zig-test"))
+              ((symbol-function 'call-process)
+               (lambda (program _infile _destination _display &rest args)
+                 (setq invocation (list program args default-directory))
+                 0)))
+      (should (emacs-canvas-color-picker-build-module))
+      (should (equal (car invocation) "zig-test"))
+      (should (equal (cadr invocation)
+                     '("build" "-Doptimize=ReleaseFast"
+                       "-Demacs-include-dir=/emacs 32/include")))
+      (should (equal (file-truename (caddr invocation))
+                     (file-truename emacs-canvas-color-picker-test--project-dir))))))
+
+(ert-deftest emacs-canvas-color-picker-test-native-build-failure-shows-log ()
+  "A failed Zig build keeps its output visible for diagnosis."
+  (let ((emacs-canvas-color-picker-zig-command "zig-test")
+        (emacs-canvas-color-picker-emacs-include-dir "/emacs/include")
+        (shown nil))
+    (cl-letf (((symbol-function 'executable-find) (lambda (_command) "zig-test"))
+              ((symbol-function 'call-process)
+               (lambda (_program _infile destination _display &rest _args)
+                 (with-current-buffer destination
+                   (insert "compiler failed"))
+                 1))
+              ((symbol-function 'display-buffer)
+               (lambda (buffer &rest _args) (setq shown buffer))))
+      (should-error (emacs-canvas-color-picker-build-module) :type 'user-error)
+      (should (eq shown (get-buffer "*color-picker-build*")))
+      (should (with-current-buffer shown
+                (string-match-p "compiler failed" (buffer-string)))))))
+
+(ert-deftest emacs-canvas-color-picker-test-native-existing-module-skips-build ()
+  "An existing module loads without running Zig."
+  (let ((emacs-canvas-color-picker--native-loaded nil)
+        (emacs-canvas-color-picker-native-module-file emacs-canvas-color-picker-test--project-dir)
+        (loaded nil))
+    (cl-letf (((symbol-function 'emacs-canvas-color-picker-build-module)
+               (lambda () (ert-fail "Rebuilt an existing module")))
+              ((symbol-function 'module-load)
+               (lambda (_file) (setq loaded t)))
+              ((symbol-function 'emacs-canvas-color-picker-native-render-full)
+               (lambda (&rest _) t)))
+      (should (emacs-canvas-color-picker-load-native))
+      (should loaded))))
+
 (ert-deftest emacs-canvas-color-picker-test-native-required-before-render ()
-  "A missing module stops opening before any render or display change."
+  "A failed native build stops opening before rendering or displaying."
   (let ((emacs-canvas-color-picker--active-state nil)
         (emacs-canvas-color-picker--native-loaded nil)
         (emacs-canvas-color-picker-native-module-file "/no-such-color-picker-module.so")
-        (rendered nil))
+        (rendered nil)
+        (build-attempted nil))
     (cl-letf (((symbol-function 'emacs-canvas-color-picker--ensure-canvas-available) #'ignore)
+              ((symbol-function 'emacs-canvas-color-picker-build-module)
+               (lambda () (setq build-attempted t) (user-error "Native build failed")))
               ((symbol-function 'emacs-canvas-color-picker--refresh)
                (lambda (&rest _) (setq rendered t)))
               ((symbol-function 'emacs-canvas-color-picker--setup-buffer)
                (lambda (&rest _) (ert-fail "Picker displayed without a module"))))
       (should-error (emacs-canvas-color-picker-read-color #'ignore "#ff0000" 'buffer)
                     :type 'user-error)
+      (should build-attempted)
       (should-not rendered)
       (should-not emacs-canvas-color-picker--active-state))))
 

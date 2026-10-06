@@ -34,6 +34,17 @@ The picker keeps its layout proportions at other scale values."
   "Native module file required for color picker rendering."
   :type 'file)
 
+(defcustom emacs-canvas-color-picker-zig-command "zig"
+  "Zig executable used to build the native color picker module."
+  :type 'string)
+
+(defcustom emacs-canvas-color-picker-emacs-include-dir nil
+  "Directory containing the Emacs 32 `emacs-module.h' header."
+  :type '(choice (const nil) directory))
+
+(defconst emacs-canvas-color-picker--project-dir
+  (file-name-directory (or load-file-name buffer-file-name default-directory)))
+
 (defcustom emacs-canvas-color-picker-trace-file
   (getenv "COLOR_PICKER_TRACE_FILE")
   "File path for color picker drag trace logs, or nil to disable tracing."
@@ -359,30 +370,44 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
       (list :region 'hue
             :h (emacs-canvas-color-picker--position-fraction (- y hue-top) hue-height))))))
 
+(defun emacs-canvas-color-picker-build-module ()
+  "Build the native color picker module in its source checkout."
+  (interactive)
+  (unless (and (stringp emacs-canvas-color-picker-emacs-include-dir)
+               (not (string-empty-p emacs-canvas-color-picker-emacs-include-dir)))
+    (user-error "Set emacs-canvas-color-picker-emacs-include-dir to the Emacs 32 header directory"))
+  (unless (executable-find emacs-canvas-color-picker-zig-command)
+    (user-error "Zig executable not found: %s" emacs-canvas-color-picker-zig-command))
+  (let ((default-directory emacs-canvas-color-picker--project-dir)
+        (buffer (get-buffer-create "*color-picker-build*")))
+    (with-current-buffer buffer
+      (erase-buffer))
+    (unless (eq 0 (call-process emacs-canvas-color-picker-zig-command nil buffer t
+                                "build" "-Doptimize=ReleaseFast"
+                                (concat "-Demacs-include-dir="
+                                        emacs-canvas-color-picker-emacs-include-dir)))
+      (display-buffer buffer)
+      (user-error "Native color picker build failed; see %s" (buffer-name buffer))))
+  t)
+
 (defun emacs-canvas-color-picker-load-native (&optional noerror)
-  "Load the native color picker renderer.
+  "Load the native color picker renderer, building it when missing.
 
 When NOERROR is non-nil, return nil instead of signaling load errors."
   (interactive)
-  (cond
-   ((and (not emacs-canvas-color-picker--native-loaded)
-         (not (file-exists-p emacs-canvas-color-picker-native-module-file)))
-    (unless noerror
-      (user-error "Native color picker module does not exist: %s"
-                  emacs-canvas-color-picker-native-module-file))
-    nil)
-   (t
-    (condition-case error
-        (progn
-          (unless emacs-canvas-color-picker--native-loaded
-            (module-load emacs-canvas-color-picker-native-module-file))
-          (unless (fboundp 'emacs-canvas-color-picker-native-render-full)
-            (error "Native color picker module lacks full renderer"))
-          (setq emacs-canvas-color-picker--native-loaded t))
-      (error
-       (unless noerror
-         (user-error "Cannot load native color picker module: %s" (error-message-string error)))
-       nil)))))
+  (condition-case error
+      (progn
+        (unless emacs-canvas-color-picker--native-loaded
+          (unless (file-exists-p emacs-canvas-color-picker-native-module-file)
+            (emacs-canvas-color-picker-build-module))
+          (module-load emacs-canvas-color-picker-native-module-file))
+        (unless (fboundp 'emacs-canvas-color-picker-native-render-full)
+          (error "Native color picker module lacks full renderer"))
+        (setq emacs-canvas-color-picker--native-loaded t))
+    (error
+     (unless noerror
+       (user-error "Cannot load native color picker module: %s" (error-message-string error)))
+     nil)))
 
 (defun emacs-canvas-color-picker--hex-at-point ()
   "Return a hex color near point, or nil."

@@ -13,13 +13,7 @@ fn emacsIncludeDir(b: *std.Build) []const u8 {
         if (hasEmacsHeader(b, dir)) return dir;
         std.debug.panic("EMACS_INCLUDE_DIR={s} does not contain emacs-module.h", .{dir});
     }
-    if (b.option([]const u8, "emacs-bin-dir", "Directory containing the Emacs binary")) |bin_dir| {
-        for ([_][]const u8{ bin_dir, b.pathJoin(&.{ bin_dir, "..", "include" }), b.pathJoin(&.{ bin_dir, "..", "share", "emacs", "include" }) }) |dir| {
-            if (hasEmacsHeader(b, dir)) return dir;
-        }
-        std.debug.panic("EMACS_BIN_DIR={s} has no nearby emacs-module.h; set EMACS_INCLUDE_DIR", .{bin_dir});
-    }
-    @panic("Set EMACS_INCLUDE_DIR or EMACS_BIN_DIR (or pass -Demacs-include-dir or -Demacs-bin-dir)");
+    @panic("Set EMACS_INCLUDE_DIR (or pass -Demacs-include-dir)");
 }
 
 pub fn build(b: *std.Build) void {
