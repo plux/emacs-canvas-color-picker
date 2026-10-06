@@ -11,12 +11,13 @@ COLOR_PICKER_BENCHMARK_SIZES ?= 64x64 128x128 256x256
 COLOR_PICKER_BENCHMARK_ITERATIONS ?= 50
 COLOR_PICKER_BENCHMARK_BASE_ITERATIONS ?= 10
 
-.PHONY: help build test lint run run-trace native-benchmark
+.PHONY: help build test lint run run-trace native-benchmark test-release-local
 
 help:
 	@printf '%s\n' \
 		'make build              Build zig-out/lib/libcolor-picker.so' \
 		'make test               Run the color picker ERT suite in batch Emacs' \
+		'make test-release-local Run the artifact workflow with act and check its output' \
 		'make lint               Check Zig formatting, zlint, and Elisp byte compilation' \
 		'make run                Open the picker in graphical Emacs' \
 		'make run-trace          Open the picker with drag trace logging' \
@@ -27,6 +28,9 @@ build:
 
 test:
 	"$(EMACS)" --batch -Q --eval '(setq load-prefer-newer t)' -L "$(PROJECT_DIR)" -l "$(PROJECT_DIR)/color-picker-test.el" -f ert-run-tests-batch-and-exit
+
+test-release-local:
+	bash "$(PROJECT_DIR)/scripts/test-release-local.sh"
 
 lint:
 	"$(ZIG)" fmt --check "$(PROJECT_DIR)/build.zig" "$(PROJECT_DIR)/src/module.zig"

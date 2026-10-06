@@ -357,6 +357,13 @@ fn nativeRenderFull(env: [*c]c.emacs_env, nargs: c.ptrdiff_t, args: [*c]c.emacs_
     return truth(env);
 }
 
+fn nativeApiVersion(env: [*c]c.emacs_env, nargs: c.ptrdiff_t, args: [*c]c.emacs_value, data: ?*anyopaque) callconv(.c) c.emacs_value {
+    _ = nargs;
+    _ = args;
+    _ = data;
+    return env.*.make_integer.?(env, 1);
+}
+
 export fn emacs_module_init(runtime: [*c]c.struct_emacs_runtime) c_int {
     if (runtime.*.size < @as(c.ptrdiff_t, @intCast(@sizeOf(c.struct_emacs_runtime)))) {
         return 1;
@@ -365,6 +372,9 @@ export fn emacs_module_init(runtime: [*c]c.struct_emacs_runtime) c_int {
     if (env.*.size < @as(c.ptrdiff_t, @intCast(@sizeOf(c.emacs_env)))) {
         return 2;
     }
+
+    const api_version_fn = env.*.make_function.?(env, 0, 0, nativeApiVersion, "Return the native color picker API version.", null);
+    defalias(env, "emacs-canvas-color-picker-native-api-version", api_version_fn);
 
     const render_base_fn = env.*.make_function.?(env, 11, 11, nativeRenderBase, "Render the color picker base palette into a canvas.", null);
     defalias(env, "emacs-canvas-color-picker-native-render-base", render_base_fn);

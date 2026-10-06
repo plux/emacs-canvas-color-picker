@@ -5,31 +5,29 @@ This color picker uses Emacs Lisp for input, color conversion, and previews. A Z
 ## Requirements
 
 - A graphical Emacs 32 build with canvas image support and dynamic module support.
-- An Emacs 32 `emacs-module.h` header that provides `canvas_data`.
-- Zig compatible with `build.zig` (tested with Zig 0.17.0-dev.1811+6716bf52e).
+- Zig 0.17.0 for local builds. Release downloads do not require Zig.
 - GNU Make for the commands below. The optional `make lint` target also requires `zlint` on `PATH`.
+- `curl` for release downloads.
+
+The repository includes `vendor/emacs-module.h` from GNU Emacs 32 source commit `ed1fc1b6be1bb7f9365577527d13b8045b232160`. The header provides `canvas_data`. Its GNU GPL notice remains in the file.
 
 ## Build and run
 
-Set `EMACS_INCLUDE_DIR` to the directory that contains `emacs-module.h`. Set `EMACS` to the Emacs 32 executable for tests and interactive use. These paths can refer to the same source-build directory.
-
-Pass paths on the command line:
+Set `EMACS_INCLUDE_DIR` to `vendor` for the included Emacs 32 header. Set `EMACS` to an Emacs 32 executable for tests and interactive use.
 
 ```bash
-make build EMACS_INCLUDE_DIR=/path/to/emacs-source/src
-make run EMACS=/path/to/emacs-source/src/emacs EMACS_INCLUDE_DIR=/path/to/emacs-source/src
+make build EMACS_INCLUDE_DIR=vendor
+make run EMACS=/path/to/emacs32 EMACS_INCLUDE_DIR=vendor
 ```
 
-For personal paths, create an ignored `local.mk` in the repository root:
+To use another Emacs 32 header, set `EMACS_INCLUDE_DIR` to its directory. An older Emacs header cannot build this canvas module. For personal paths, use an ignored `local.mk`:
 
 ```makefile
-EMACS = /path/to/emacs-source/src/emacs
-EMACS_INCLUDE_DIR = /path/to/emacs-source/src
+EMACS = /path/to/emacs32
+EMACS_INCLUDE_DIR = vendor
 ```
 
-Then run `make build` and `make run`. A system-installed Emacs header from an older version cannot build this canvas module.
-
-The build installs `zig-out/lib/libcolor-picker.so`. The picker loads that file by default and builds it if missing. Set `emacs-canvas-color-picker-native-module-file` to a different path if needed. Existing modules do not rebuild automatically. `make run` builds the module before it opens the picker.
+The build installs `zig-out/lib/libcolor-picker.so`. The picker loads that file by default. Set `emacs-canvas-color-picker-native-module-file` to another path if needed. Existing modules do not rebuild automatically. `make run` builds the module before it opens the picker.
 
 ## Use with use-package
 
@@ -40,12 +38,12 @@ Add this declaration to your Emacs configuration:
   :vc (:url "https://github.com/plux/emacs-canvas-color-picker" :rev :newest)
   :commands (emacs-canvas-color-picker-copy
              emacs-canvas-color-picker-insert
-             emacs-canvas-color-picker-at-point)
-  :custom
-  (emacs-canvas-color-picker-emacs-include-dir "/path/to/emacs-source/src"))
+             emacs-canvas-color-picker-at-point))
 ```
 
-Replace the header path with the directory that contains your Emacs 32 `emacs-module.h`. The first picker command builds the native module if it is missing. Later commands load the existing module without a rebuild. If Zig fails, the picker shows `*color-picker-build*` and leaves no picker open. `make build` remains available for manual builds.
+For local builds, set the include directory to `vendor` or another Emacs 32 header directory. When the module is missing, interactive Emacs offers a release download or a Zig build on Linux x86_64. Other platforms offer the Zig build. Batch Emacs builds locally without a prompt or network request. The picker does not switch methods after a failure. If Zig fails, the picker shows `*color-picker-build*` and leaves no picker open. `make build` remains available for manual builds.
+
+Version `0.1.0` selects only `v0.1.0` release assets named `libcolor-picker-v0.1.0-linux-x86_64.so`, `libcolor-picker-v0.1.0-linux-x86_64.so.sha256`, and `libcolor-picker-v0.1.0-linux-x86_64.so.api`. The download checks the binary checksum and the API metadata against the same bytes before loading. It then checks that the new module registered both native functions and reports live API version `1`. If a check or installation fails after `module-load`, restart Emacs before another attempt. No GitHub release exists yet, so the download choice currently reports that its asset is unavailable. Select the local build instead. A GitHub Actions artifact is not a public release asset.
 
 Alternatively, load `color-picker.el` from this directory into a graphical Emacs frame. Use these commands:
 
@@ -73,7 +71,7 @@ Run `M-x customize-group RET emacs-canvas-color-picker RET` to change these opti
 | `emacs-canvas-color-picker-inline-preview` | `t` | Show a temporary preview in the source buffer for insert and at-point. |
 | `emacs-canvas-color-picker-native-module-file` | `zig-out/lib/libcolor-picker.so` | Native module path, relative to this checkout by default. |
 | `emacs-canvas-color-picker-zig-command` | `"zig"` | Zig executable for automatic builds. |
-| `emacs-canvas-color-picker-emacs-include-dir` | nil | Directory with Emacs 32 `emacs-module.h`. Set this for automatic builds. |
+| `emacs-canvas-color-picker-emacs-include-dir` | `vendor` in this package | Directory with Emacs 32 `emacs-module.h` for local builds. |
 | `emacs-canvas-color-picker-trace-file` | `COLOR_PICKER_TRACE_FILE` or nil | File for drag trace logs. Leave nil to disable tracing. |
 
 For example, set buffer display and disable inline previews with `use-package`:
@@ -85,17 +83,30 @@ For example, set buffer display and disable inline previews with `use-package`:
              emacs-canvas-color-picker-insert
              emacs-canvas-color-picker-at-point)
   :custom
-  (emacs-canvas-color-picker-emacs-include-dir "/path/to/emacs-source/src")
   (emacs-canvas-color-picker-display 'buffer)
   (emacs-canvas-color-picker-inline-preview nil))
 ```
 
+## CI artifact and release
+
+The tag workflow builds a Linux x86_64 module and uploads the binary, SHA-256 file, and API metadata file as a GitHub Actions artifact. Keep the `Version:` header and `emacs-canvas-color-picker-version` equal when you change the release version. The workflow and local release test reject a mismatch. The workflow downloads the official Zig 0.17.0 archive and checks its pinned SHA-256. It uses the vendored Emacs 32 header. CI does not build or run Emacs and does not publish a GitHub release. No additional Emacs packages are installed for the artifact build.
+
+A later release needs a separate approval, a successful runner build, and an Emacs 32 runtime check before publication. Publish all three matching files from the artifact under the exact version tag. Test the public URLs, checksum, and API metadata after publication.
+
+To test the artifact job locally, install `act`, Docker, and Python 3. Select a reachable Docker context. Then run this command from the repository:
+
+```bash
+make test-release-local
+```
+
+The target runs the workflow in an Ubuntu 24.04 container and checks the local artifact ZIP, checksum, API metadata, and Linux x86_64 module format. It uses local files, including uncommitted changes. An artifact URL printed by `act` is simulated. The command does not create a GitHub tag, artifact, or release. A successful local run does not replace a GitHub runner check.
+
 ## Tests and benchmark
 
 ```bash
-make test EMACS=/path/to/emacs
-make lint EMACS=/path/to/emacs
-make native-benchmark EMACS=/path/to/emacs EMACS_INCLUDE_DIR=/path/to/emacs-source/src
+make test EMACS=/path/to/emacs32
+make lint EMACS=/path/to/emacs32
+make native-benchmark EMACS=/path/to/emacs32 EMACS_INCLUDE_DIR=vendor
 ```
 
 `make lint` checks Zig formatting, runs zlint, and byte-compiles the picker, tests, and benchmark. Byte compilation writes to `/dev/null` and treats warnings as errors.

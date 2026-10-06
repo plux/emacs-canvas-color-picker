@@ -1,4 +1,5 @@
 ;;; color-picker.el --- Canvas color picker widget -*- lexical-binding: t; -*-
+;; Version: 0.1.0
 
 ;;; Commentary:
 ;; Elisp color picker UI with native rendering for Emacs 32 canvas images.
@@ -6,6 +7,14 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'subr-x)
+
+;; Keep this value in sync with the Version header for matching release assets.
+(defconst emacs-canvas-color-picker-version "0.1.0"
+  "Release version used to select a matching native module.")
+
+(defconst emacs-canvas-color-picker--max-download-bytes (* 1024 1024)
+  "Maximum number of bytes allowed per release asset.")
 
 (defgroup emacs-canvas-color-picker nil
   "Canvas-backed color picker widget."
@@ -38,9 +47,11 @@ The picker keeps its layout proportions at other scale values."
   "Zig executable used to build the native color picker module."
   :type 'string)
 
-(defcustom emacs-canvas-color-picker-emacs-include-dir nil
+(defcustom emacs-canvas-color-picker-emacs-include-dir
+  (expand-file-name "vendor" (file-name-directory
+                              (or load-file-name buffer-file-name default-directory)))
   "Directory containing the Emacs 32 `emacs-module.h' header."
-  :type '(choice (const nil) directory))
+  :type 'directory)
 
 (defconst emacs-canvas-color-picker--project-dir
   (file-name-directory (or load-file-name buffer-file-name default-directory)))
@@ -56,6 +67,13 @@ The picker keeps its layout proportions at other scale values."
 (defvar emacs-canvas-color-picker--native-loaded nil
   "Non-nil when the native color picker renderer is loaded.")
 
+(defvar emacs-canvas-color-picker--native-restart-required nil
+  "Non-nil after a failed module load that can leave native functions mapped.")
+
+(defconst emacs-canvas-color-picker--native-api-version 1
+  "Required API version of the native renderer.")
+
+(declare-function emacs-canvas-color-picker-native-api-version nil ())
 (declare-function emacs-canvas-color-picker-native-render-full nil
                   (canvas width height hue saturation value padding gap hue-width swatch-width swatch-height swatch-gap marker-radius initial-hue initial-saturation initial-value focus-region))
 
@@ -390,6 +408,116 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
       (user-error "Native color picker build failed; see %s" (buffer-name buffer))))
   t)
 
+(defun emacs-canvas-color-picker--release-asset ()
+  "Return the exact release asset for this host, or nil."
+  (when (and (eq system-type 'gnu/linux)
+             (string-prefix-p "x86_64-" system-configuration))
+    (format "libcolor-picker-v%s-linux-x86_64.so" emacs-canvas-color-picker-version)))
+
+(defun emacs-canvas-color-picker--check-native-api ()
+  "Reject a native renderer with an incompatible API."
+  (unless (fboundp 'emacs-canvas-color-picker-native-api-version)
+    (error "Native color picker module lacks API version; rebuild or replace it"))
+  (let ((version (emacs-canvas-color-picker-native-api-version)))
+    (unless (equal version emacs-canvas-color-picker--native-api-version)
+      (error "Native color picker API %s is incompatible with required API %s; rebuild or replace the module"
+             version emacs-canvas-color-picker--native-api-version)))
+  (unless (fboundp 'emacs-canvas-color-picker-native-render-full)
+    (error "Native color picker module lacks full renderer")))
+
+(defun emacs-canvas-color-picker--check-new-native-functions (previous-api previous-renderer)
+  "Require the newly loaded module to replace PREVIOUS-API and PREVIOUS-RENDERER."
+  (unless (and (fboundp 'emacs-canvas-color-picker-native-api-version)
+               (fboundp 'emacs-canvas-color-picker-native-render-full)
+               (not (eq previous-api
+                        (symbol-function 'emacs-canvas-color-picker-native-api-version)))
+               (not (eq previous-renderer
+                        (symbol-function 'emacs-canvas-color-picker-native-render-full))))
+    (error "Native color picker module did not register its API and full renderer")))
+
+(defun emacs-canvas-color-picker--fetch-asset (url path)
+  "Fetch HTTPS URL to PATH with a bounded transfer and a successful response."
+  (unless (string-prefix-p "https://github.com/plux/emacs-canvas-color-picker/releases/download/" url)
+    (error "Unexpected release URL"))
+  (unless (executable-find "curl")
+    (error "curl is required to download the native module"))
+  (unless (eq 0 (call-process "curl" nil nil nil "--fail" "--location"
+                              "--proto" "=https" "--proto-redir" "=https"
+                              "--max-time" "30" "--max-filesize"
+                              (number-to-string emacs-canvas-color-picker--max-download-bytes)
+                              "--output" path url))
+    (error "Release asset unavailable or download failed: %s" url))
+  (when (> (file-attribute-size (file-attributes path))
+           emacs-canvas-color-picker--max-download-bytes)
+    (error "Release asset exceeds size limit: %s" url)))
+
+(defun emacs-canvas-color-picker-download-module ()
+  "Install the matching Linux x86_64 release module after verification."
+  (interactive)
+  (let* ((asset (emacs-canvas-color-picker--release-asset))
+         (destination emacs-canvas-color-picker-native-module-file)
+         (tag (concat "v" emacs-canvas-color-picker-version)))
+    (unless asset
+      (user-error "No release module for this platform; build locally with Zig"))
+    (when emacs-canvas-color-picker--native-restart-required
+      (user-error "Restart Emacs before loading another native color picker module"))
+    (when (or emacs-canvas-color-picker--native-loaded (file-exists-p destination))
+      (user-error "Native module already exists; do not replace a loaded or existing module"))
+    (make-directory (file-name-directory destination) t)
+    (let* ((base (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/%s/" tag))
+           (temporary (make-temp-file (expand-file-name ".color-picker-module-"
+                                                       (file-name-directory destination)) nil ".so"))
+           (checksum (make-temp-file "color-picker-checksum-"))
+           (metadata (make-temp-file "color-picker-api-")))
+      (unwind-protect
+          (progn
+            (emacs-canvas-color-picker--fetch-asset (concat base asset ".sha256") checksum)
+            (emacs-canvas-color-picker--fetch-asset (concat base asset ".api") metadata)
+            (emacs-canvas-color-picker--fetch-asset (concat base asset) temporary)
+            (let* ((expected (with-temp-buffer
+                               (insert-file-contents checksum)
+                               (goto-char (point-min))
+                               (when (re-search-forward
+                                      (concat "\\`\\([[:xdigit:]]\\{64\\}\\)  "
+                                              (regexp-quote asset) "\n?\\'") nil t)
+                                 (downcase (match-string 1)))))
+                   (actual (with-temp-buffer
+                             (insert-file-contents-literally temporary)
+                             (secure-hash 'sha256 (current-buffer))))
+                   (api (with-temp-buffer
+                          (insert-file-contents metadata)
+                          (goto-char (point-min))
+                          (when (re-search-forward "\\`\\([0-9]+\\) \\([[:xdigit:]]\\{64\\}\\)\n?\\'" nil t)
+                            (list (string-to-number (match-string 1))
+                                  (downcase (match-string 2)))))))
+              (unless (and expected (string= expected actual))
+                (error "Release module checksum mismatch"))
+              (unless (and api (string= (cadr api) actual))
+                (error "Release module API metadata does not match the binary"))
+              (unless (= (car api) emacs-canvas-color-picker--native-api-version)
+                (error "Release module API %s is incompatible with required API %s"
+                       (car api) emacs-canvas-color-picker--native-api-version)))
+            (condition-case error
+                (progn
+                  (let ((previous-api (and (fboundp 'emacs-canvas-color-picker-native-api-version)
+                                           (symbol-function 'emacs-canvas-color-picker-native-api-version)))
+                        (previous-renderer (and (fboundp 'emacs-canvas-color-picker-native-render-full)
+                                                (symbol-function 'emacs-canvas-color-picker-native-render-full))))
+                    (setq emacs-canvas-color-picker--native-restart-required t)
+                    (module-load temporary)
+                    (emacs-canvas-color-picker--check-new-native-functions previous-api previous-renderer))
+                  (emacs-canvas-color-picker--check-native-api)
+                  (rename-file temporary destination)
+                  (setq emacs-canvas-color-picker--native-loaded t
+                        emacs-canvas-color-picker--native-restart-required nil))
+              (error
+               (error "Native module load or installation failed: %s. Restart Emacs before retrying"
+                      (error-message-string error))))
+            t)
+        (when (file-exists-p temporary) (delete-file temporary))
+        (when (file-exists-p checksum) (delete-file checksum))
+        (when (file-exists-p metadata) (delete-file metadata))))))
+
 (defun emacs-canvas-color-picker-load-native (&optional noerror)
   "Load the native color picker renderer, building it when missing.
 
@@ -397,16 +525,43 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
   (interactive)
   (condition-case error
       (progn
+        (when emacs-canvas-color-picker--native-restart-required
+          (user-error "Restart Emacs before loading another native color picker module"))
         (unless emacs-canvas-color-picker--native-loaded
           (unless (file-exists-p emacs-canvas-color-picker-native-module-file)
-            (emacs-canvas-color-picker-build-module))
-          (module-load emacs-canvas-color-picker-native-module-file))
-        (unless (fboundp 'emacs-canvas-color-picker-native-render-full)
-          (error "Native color picker module lacks full renderer"))
-        (setq emacs-canvas-color-picker--native-loaded t))
+            (if noninteractive
+                (emacs-canvas-color-picker-build-module)
+              (let ((asset (emacs-canvas-color-picker--release-asset)))
+                (if (equal (completing-read "Native module: "
+                                            (if asset
+                                                '("Download release module" "Build locally with Zig")
+                                              '("Build locally with Zig"))
+                                            nil t)
+                           "Download release module")
+                    (emacs-canvas-color-picker-download-module)
+                  (emacs-canvas-color-picker-build-module)))))
+          (unless emacs-canvas-color-picker--native-loaded
+            (let ((previous-api (and (fboundp 'emacs-canvas-color-picker-native-api-version)
+                                     (symbol-function 'emacs-canvas-color-picker-native-api-version)))
+                  (previous-renderer (and (fboundp 'emacs-canvas-color-picker-native-render-full)
+                                          (symbol-function 'emacs-canvas-color-picker-native-render-full))))
+              (setq emacs-canvas-color-picker--native-restart-required t)
+              (module-load emacs-canvas-color-picker-native-module-file)
+              (emacs-canvas-color-picker--check-new-native-functions previous-api previous-renderer))))
+        (emacs-canvas-color-picker--check-native-api)
+        (setq emacs-canvas-color-picker--native-loaded t
+              emacs-canvas-color-picker--native-restart-required nil)
+        t)
     (error
+     (when emacs-canvas-color-picker--native-loaded
+       (setq emacs-canvas-color-picker--native-restart-required t))
+     (setq emacs-canvas-color-picker--native-loaded nil)
      (unless noerror
-       (user-error "Cannot load native color picker module: %s" (error-message-string error)))
+       (user-error "Cannot load native color picker module: %s%s"
+                   (error-message-string error)
+                   (if emacs-canvas-color-picker--native-restart-required
+                       ". Restart Emacs before retrying"
+                     "")))
      nil)))
 
 (defun emacs-canvas-color-picker--hex-at-point ()
