@@ -23,7 +23,14 @@ jobs:
       - name: Build native module with vendored Emacs 32 header
         shell: bash
         run: |
-          TIMEFORMAT='Build elapsed: %R seconds'
+          TIMEFORMAT='First build elapsed: %R seconds'
+          time zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline --summary all
+          printf 'ZIG_LOCAL_CACHE_DIR=%s\nZIG_GLOBAL_CACHE_DIR=%s\n' "${ZIG_LOCAL_CACHE_DIR:-unset}" "${ZIG_GLOBAL_CACHE_DIR:-unset}"
+          du -sh .zig-cache 2>/dev/null || true
+      - name: Repeat build on the same runner
+        shell: bash
+        run: |
+          TIMEFORMAT='Second build elapsed: %R seconds'
           time zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline --summary all
       - name: Package module and checksum
         shell: bash
