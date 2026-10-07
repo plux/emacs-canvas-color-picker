@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           TIMEFORMAT='Build elapsed: %R seconds'
-          time zig build -Doptimize=ReleaseFast -Demacs-include-dir="$PWD/vendor" -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline --summary all
+          time zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline --summary all
       - name: Package module and checksum
         shell: bash
         run: |
