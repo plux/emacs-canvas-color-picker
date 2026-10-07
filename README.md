@@ -88,7 +88,11 @@ For example, set buffer display and disable inline previews with `use-package`:
 
 ## CI artifact and release
 
-The tag workflow builds a Linux x86_64 module and uploads the binary and SHA-256 file as a GitHub Actions artifact. Keep the `Version:` header and `canvas-color-picker-version` equal when you change the release version. The workflow and local release test reject a mismatch. The workflow downloads the official Zig 0.17.0 archive and checks its pinned SHA-256. It uses the vendored Emacs 32 header. CI does not build or run Emacs and does not publish a GitHub release. No additional Emacs packages are installed for the artifact build.
+The tag workflow builds a Linux x86_64 module. It uploads the binary and SHA-256 file as a GitHub Actions artifact. Keep the `Version:` header and `canvas-color-picker-version` equal when you change the release version. The workflow and local release test reject a mismatch.
+
+The workflow installs Zig 0.17.0 through a pinned `mlugg/setup-zig` action with a Zig build cache. It builds with a fixed Linux target and baseline CPU against the vendored Emacs 32 header. Cache restoration does not guarantee a faster build. Tag-triggered runs do not establish cache sharing across tags.
+
+CI does not build or run Emacs. It does not publish a GitHub release. No additional Emacs packages are installed for the artifact build.
 
 A later release needs a separate approval, a successful runner build, and an Emacs 32 runtime check before publication. Publish both matching files from the artifact under the exact version tag. Test the public URLs, checksum, and picker download after publication.
 
