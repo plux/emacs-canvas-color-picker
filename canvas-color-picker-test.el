@@ -2128,6 +2128,15 @@
       (funcall (canvas-color-picker--state-callback state) "#ff0000")
       (should (equal (buffer-string) "#ff0000")))))
 
+(ert-deftest canvas-color-picker-test-at-point-replaces-color-before-point ()
+  "At-point accept replaces a color when point follows its last character."
+  (with-temp-buffer
+    (insert "#ff00ff")
+    (let ((state (canvas-color-picker--make-at-point-state (current-buffer))))
+      (should (equal (canvas-color-picker--output-text state) "#ff00ff"))
+      (funcall (canvas-color-picker--state-callback state) "#00ff00")
+      (should (equal (buffer-string) "#00ff00")))))
+
 (ert-deftest canvas-color-picker-test-at-point-replaces-bare-color ()
   "At-point accept replaces a bare hex color without adding #."
   (with-temp-buffer

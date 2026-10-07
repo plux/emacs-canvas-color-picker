@@ -1261,7 +1261,7 @@ OUTPUT-FORMAT selects the callback and preview format; nil uses `css-rgb'."
                (end (match-end 0))
                (text (match-string 0)))
           (when (and (>= pos start)
-                     (< pos end)
+                     (<= pos end)
                      (canvas-color-picker--hex-boundary-before-p start)
                      (canvas-color-picker--hex-boundary-after-p end))
             (let* ((emacs-hex (string-prefix-p "#x" text))
