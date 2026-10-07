@@ -1035,7 +1035,7 @@ Return the current coordinates when they are available."
   (when (and (window-live-p window)
              (not (window-minibuffer-p window))
              (eq (window-buffer window) buffer))
-    (set-window-fringes window 1 1 nil)))
+    (set-window-fringes window 0 0 nil)))
 
 (defun canvas-color-picker--frame-parameters (parent width height left top)
   "Return child frame parameters for PARENT and geometry WIDTH HEIGHT LEFT TOP."
