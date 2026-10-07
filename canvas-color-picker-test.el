@@ -143,7 +143,7 @@
               ((symbol-function 'read-char-choice)
                (lambda (prompt choices)
                  (should (equal choices '(?d ?c ?s)))
-                 (should (string-match-p "v0.3.0" prompt))
+                 (should (string-match-p (regexp-quote (concat "v" canvas-color-picker-version)) prompt))
                  (setq chosen t)
                  ?s))
               ((symbol-function 'canvas-color-picker-build-module)
@@ -212,7 +212,7 @@
         (cl-letf (((symbol-function 'read-char-choice)
                    (lambda (prompt choices)
                      (should (equal choices '(?d ?c ?s)))
-                     (should (string-match-p "v0.3.0" prompt))
+                     (should (string-match-p (regexp-quote (concat "v" canvas-color-picker-version)) prompt))
                      ?d))
                   ((symbol-function 'canvas-color-picker-download-module)
                    (lambda () (push 'download events)
@@ -289,7 +289,7 @@
                   ((symbol-function 'call-process)
                    (lambda (&rest _) (ert-fail "Invoked external curl"))))
           (canvas-color-picker--fetch-asset
-           "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.3.0/module.so"
+           (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/module.so" canvas-color-picker-version)
            path)
           (should (equal (with-temp-buffer
                            (set-buffer-multibyte nil)
@@ -311,7 +311,7 @@
                      (lambda (&rest _) (ert-fail "Invoked external curl"))))
             (should-error
              (canvas-color-picker--fetch-asset
-              "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.3.0/module.so"
+              (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/module.so" canvas-color-picker-version)
               path))
             (should (= (file-attribute-size (file-attributes path)) 0)))
         (delete-file path)))))
@@ -331,7 +331,7 @@
                    (lambda (&rest _) (ert-fail "Invoked external curl"))))
           (should-error
            (canvas-color-picker--fetch-asset
-            "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.3.0/module.so"
+            (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/module.so" canvas-color-picker-version)
             path))
           (should (= (length requests) 1))
           (should (= (file-attribute-size (file-attributes path)) 0)))
@@ -353,7 +353,7 @@
                   ((symbol-function 'call-process)
                    (lambda (&rest _) (ert-fail "Invoked external curl"))))
           (canvas-color-picker--fetch-asset
-           "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.3.0/module.so"
+           (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/module.so" canvas-color-picker-version)
            path)
           (should (= (length requests) 2))
           (should (equal (with-temp-buffer
@@ -374,7 +374,7 @@
                    (lambda (&rest _) (ert-fail "Invoked external curl"))))
           (should-error
            (canvas-color-picker--fetch-asset
-            "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.3.0/module.so"
+            (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/module.so" canvas-color-picker-version)
             path))
           (should (= (file-attribute-size (file-attributes path)) 0)))
       (delete-file path))))
@@ -386,14 +386,14 @@
          (canvas-color-picker-native-module-file destination)
          (canvas-color-picker--native-loaded nil)
          (canvas-color-picker--native-restart-required nil)
-         (asset "canvas-color-picker-module-v0.3.0-linux-x86_64.so")
+         (asset (format "canvas-color-picker-module-v%s-linux-x86_64.so" canvas-color-picker-version))
          (bytes "native binary fixture")
          (calls nil))
     (unwind-protect
         (cl-letf (((symbol-function 'canvas-color-picker--fetch-asset)
                    (lambda (url path)
                      (push url calls)
-                     (should (string-prefix-p "https://github.com/plux/emacs-canvas-color-picker/releases/download/v0.3.0/" url))
+                     (should (string-prefix-p (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/" canvas-color-picker-version) url))
                      (should-not (string-suffix-p ".api" url))
                      (with-temp-file path
                        (set-buffer-multibyte nil)
@@ -426,7 +426,7 @@
                      (error "Release unavailable"))
                    (with-temp-file path
                      (insert (if (string-suffix-p ".sha256" url)
-                                 (format "%s  canvas-color-picker-module-v0.3.0-linux-x86_64.so\n" (make-string 64 ?0))
+                                 (format "%s  canvas-color-picker-module-v%s-linux-x86_64.so\n" (make-string 64 ?0) canvas-color-picker-version)
                                "wrong content"))))))
         (should-error (canvas-color-picker-download-module) :type 'error)
         (should-not (file-exists-p destination))))))
@@ -484,7 +484,7 @@
          (canvas-color-picker-native-module-file destination)
          (canvas-color-picker--native-loaded nil)
          (canvas-color-picker--native-restart-required nil)
-         (asset "canvas-color-picker-module-v0.3.0-linux-x86_64.so")
+         (asset (format "canvas-color-picker-module-v%s-linux-x86_64.so" canvas-color-picker-version))
          (bytes "incompatible fixture"))
     (cl-letf (((symbol-function 'canvas-color-picker--fetch-asset)
                (lambda (url path)
@@ -504,7 +504,7 @@
          (canvas-color-picker--native-restart-required nil)
          (canvas-color-picker-native-module-file
           (expand-file-name "module.so" (make-temp-file "picker-api-" t)))
-         (asset "canvas-color-picker-module-v0.3.0-linux-x86_64.so")
+         (asset (format "canvas-color-picker-module-v%s-linux-x86_64.so" canvas-color-picker-version))
          (bytes "native fixture")
          (loads 0))
     (unwind-protect
@@ -605,7 +605,7 @@
          (directory (make-temp-file "picker-stale-" t))
          (canvas-color-picker-native-module-file
           (expand-file-name "module.so" directory))
-         (asset "canvas-color-picker-module-v0.3.0-linux-x86_64.so")
+         (asset (format "canvas-color-picker-module-v%s-linux-x86_64.so" canvas-color-picker-version))
          (bytes "native fixture"))
     (unwind-protect
         (cl-letf (((symbol-function 'canvas-color-picker--fetch-asset)

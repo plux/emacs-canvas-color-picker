@@ -2,7 +2,7 @@
 
 This procedure describes the current Linux x86_64 artifact workflow. Read [VALIDATION.md](VALIDATION.md) for the checks before and after publication.
 
-For `v0.3.0`, release `canvas-color-picker-module-v0.3.0-linux-x86_64.so` and its `.sha256` checksum. The downloader checks native API `2` after loading. The published `v0.1.0` and `v0.2.0` releases remain unchanged; their native modules do not satisfy the renamed package.
+For each version, release `canvas-color-picker-module-v<VERSION>-linux-x86_64.so` and its `.sha256` checksum. The downloader checks native API `2` after loading. Leave earlier releases unchanged.
 
 ## Prepare the version
 
@@ -41,4 +41,4 @@ gh release create v<VERSION> -R plux/emacs-canvas-color-picker \
   /path/to/canvas-color-picker-module-v<VERSION>-linux-x86_64.so.sha256
 ```
 
-Check the asset names and release text with `gh release view v<VERSION> -R plux/emacs-canvas-color-picker`. Then run the public URL and picker download checks in [VALIDATION.md](VALIDATION.md). The `0.3.0` downloader requires both new-name files at the exact version tag.
+Check the asset names and release text with `gh release view v<VERSION> -R plux/emacs-canvas-color-picker`. Then run the public URL and picker download checks in [VALIDATION.md](VALIDATION.md). The downloader requires both module and checksum files at the exact version tag.

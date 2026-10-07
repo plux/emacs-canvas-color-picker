@@ -2,7 +2,7 @@
 
 Run these commands from the color-picker repository. Use a matching graphical Emacs 32 build with canvas support. The workflow builds a Linux x86_64 module but does not run Emacs. An `act` run does not replace the hosted build or the graphical test.
 
-This document describes the `v0.3.0` two-file release contract: the renamed `.so` module and its `.sha256` checksum. The release tag identifies the package version. Native API version `2` is checked after loading. The published `v0.1.0` and `v0.2.0` releases retain their original names and native bindings. Use their tagged checkouts for historical checks.
+This document describes the two-file release contract: the `.so` module and its `.sha256` checksum. The release tag identifies the package version. Native API version `2` is checked after loading. Earlier releases remain unchanged. Use their tagged checkouts for historical checks.
 
 ## Before the tag push
 
@@ -27,7 +27,8 @@ The batch ERT suite skips its graphical child-frame test. Run that test with the
 4. Check the ZIP before extraction.
 
 ```bash
-VERSION=0.3.0
+VERSION=$(sed -n 's/^;; Version: \([0-9][0-9.]*\)$/\1/p' canvas-color-picker.el)
+test -n "$VERSION"
 RUN_ID=<RUN_ID>
 gh run view "$RUN_ID" -R plux/emacs-canvas-color-picker \
   --json conclusion,headSha,url
@@ -74,7 +75,8 @@ Make sure that the process exits with status zero and the file contains `ert-tes
 Publish only after the hosted checks pass and publication receives explicit approval. Check the release text and two asset names with `gh release view`. Then fetch the public URLs without GitHub credentials:
 
 ```bash
-VERSION=0.3.0
+VERSION=$(sed -n 's/^;; Version: \([0-9][0-9.]*\)$/\1/p' canvas-color-picker.el)
+test -n "$VERSION"
 DIR=$(mktemp -d /tmp/color-picker-public.XXXXXX)
 ASSET="canvas-color-picker-module-v${VERSION}-linux-x86_64.so"
 BASE="https://github.com/plux/emacs-canvas-color-picker/releases/download/v${VERSION}/$ASSET"
