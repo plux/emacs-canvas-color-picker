@@ -27,7 +27,7 @@ build:
 	"$(ZIG)" build -Doptimize=$(ZIG_OPTIMIZE) $(EMACS_HEADER_FLAGS)
 
 test:
-	"$(EMACS)" --batch -Q --eval '(setq load-prefer-newer t)' -L "$(PROJECT_DIR)" -l "$(PROJECT_DIR)/canvas-color-picker-test.el" -f ert-run-tests-batch-and-exit
+	"$(EMACS)" --batch -Q --eval '(setq load-prefer-newer t)' -L "$(PROJECT_DIR)" -l "$(PROJECT_DIR)/canvas-color-picker.el" -l "$(PROJECT_DIR)/canvas-color-picker-test.el" -f ert-run-tests-batch-and-exit
 
 test-release-local:
 	bash "$(PROJECT_DIR)/scripts/test-release-local.sh"
