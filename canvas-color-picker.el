@@ -1322,7 +1322,17 @@ OUTPUT-FORMAT selects the callback and preview format; nil uses `css-rgb'."
 
 (defun canvas-color-picker--make-at-point-state (target-buffer &optional display preview)
   "Return at-point picker state for TARGET-BUFFER."
-  (let* ((match (canvas-color-picker--hex-at-point-bounds))
+  (let* ((match (if (use-region-p)
+                    (let ((start (region-beginning))
+                          (end (region-end)))
+                      (or (save-restriction
+                            (narrow-to-region start end)
+                            (save-excursion
+                              (goto-char start)
+                              (let ((selected (canvas-color-picker--hex-at-point-bounds)))
+                                (and selected (= (plist-get selected :end) end) selected))))
+                          (user-error "Select a complete supported color")))
+                  (canvas-color-picker--hex-at-point-bounds)))
          (initial-color (and match (plist-get match :rgb)))
          (insert-marker (copy-marker (point) t))
          (replace-start (and match (copy-marker (plist-get match :start))))
@@ -1396,6 +1406,8 @@ An explicit fourth argument INLINE-PREVIEW overrides the Customize default."
 (defun canvas-color-picker-at-point (&optional display &rest inline-preview)
   "Open the color picker and replace a hex color at point when present.
 
+An active region takes priority and must contain one complete supported color.
+Accept replaces the region; cancel leaves it unchanged.
 DISPLAY overrides `canvas-color-picker-display' when non-nil.
 An explicit second argument INLINE-PREVIEW overrides the Customize default."
   (interactive)

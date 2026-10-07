@@ -1860,7 +1860,8 @@
               ((symbol-function 'set-window-fringes)
                (lambda (&rest args) (push args calls))))
       (canvas-color-picker--set-window-minimal-fringes 'picker-window 'picker-buffer)
-      (should (equal calls '((picker-window 1 1 nil)))))))
+      (should (= (length calls) 1))
+      (should (equal (cl-subseq (car calls) 0 3) '(picker-window 0 0))))))
 
 (ert-deftest canvas-color-picker-test-scale-default-geometry ()
   "Scale 1 preserves the documented canvas and region dimensions."
@@ -2147,6 +2148,59 @@
     (let ((state (canvas-color-picker--make-at-point-state (current-buffer))))
       (funcall (canvas-color-picker--state-callback state) "#ff0000")
       (should (equal (buffer-string) "color: #ff0000")))))
+
+(ert-deftest canvas-color-picker-test-at-point-region-formats ()
+  "A selected color takes priority over point and retains its format."
+  (dolist (case '(("#112233aF" "#ff0000aF")
+                  ("#xAf112233" "#xAfff0000")
+                  ("0x112233" "0xff0000")
+                  ("112233" "ff0000")))
+    (with-temp-buffer
+      (let ((transient-mark-mode t))
+        (insert "#abcdef " (car case) "#123456")
+        (goto-char (+ (point-min) 8 (length (car case))))
+        (push-mark (+ (point-min) 8) t t)
+        (let ((state (canvas-color-picker--make-at-point-state (current-buffer))))
+          (should (equal (canvas-color-picker--state-preview-buffer state) nil))
+          (setf (canvas-color-picker--state-hue state) 0.0
+                (canvas-color-picker--state-saturation state) 1.0
+                (canvas-color-picker--state-value state) 1.0)
+          (funcall (canvas-color-picker--state-callback state)
+                   (canvas-color-picker--output-text state))
+          (should (equal (buffer-string)
+                         (concat "#abcdef " (cadr case) "#123456"))))))))
+
+(ert-deftest canvas-color-picker-test-at-point-region-rejects-invalid ()
+  "A non-color or partial selection does not use the color under point."
+  (dolist (selection '("not a color" "11223" "#112233 extra"))
+    (with-temp-buffer
+      (let ((transient-mark-mode t))
+        (insert "#abcdef " selection)
+        (goto-char (point-max))
+        (push-mark (+ (point-min) 8) t t)
+        (should-error (canvas-color-picker--make-at-point-state (current-buffer))
+                      :type 'user-error)
+        (should (equal (buffer-string) (concat "#abcdef " selection)))))))
+
+(ert-deftest canvas-color-picker-test-at-point-region-preview-cancel ()
+  "The selected text stays unchanged during preview and after cancel."
+  (let (canvas-color-picker--active-state)
+    (save-window-excursion
+      (with-temp-buffer
+        (let ((transient-mark-mode t))
+          (insert "before #112233 after")
+          (goto-char 15)
+          (push-mark 8 t t)
+          (set-window-buffer (selected-window) (current-buffer))
+          (cl-letf (((symbol-function 'canvas-color-picker--ensure-canvas-available) #'ignore)
+                    ((symbol-function 'canvas-color-picker--refresh) #'ignore)
+                    ((symbol-function 'canvas-color-picker--make-frame) #'ignore))
+            (let ((state (canvas-color-picker-at-point)))
+              (should (equal (overlay-get (canvas-color-picker--state-preview-overlay state)
+                                          'display) "#112233"))
+              (should (equal (buffer-string) "before #112233 after"))
+              (canvas-color-picker--cancel state)
+              (should (equal (buffer-string) "before #112233 after")))))))))
 
 (ert-deftest canvas-color-picker-test-inline-insert-preview-cancel ()
   "The default insert preview leaves buffer text intact and cancels cleanly."

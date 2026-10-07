@@ -56,6 +56,8 @@ The picker opens in a child frame near point by default. Set `canvas-color-picke
 
 Use the mouse on the saturation/value square or the hue strip. The two swatches show the selected color and the initial color. Press `TAB` to move keyboard focus between the square and the strip. Arrow keys and `p`, `n`, `b`, `f` adjust the active region. Ctrl+Arrow and `C-p`, `C-n`, `C-b`, `C-f` use larger steps. `M-p` and `M-n` adjust hue directly. Press `RET` to accept, or `q` to cancel.
 
+`canvas-color-picker-at-point` uses an active region before the color at point. The region must contain one complete supported color. Accept replaces the selected text and keeps its format. Cancel leaves the text unchanged. An invalid selection produces an error.
+
 `canvas-color-picker-inline-preview` controls temporary source-buffer previews for insert and at-point. The original text stays unchanged until accept. Copy, insert, and read-color support CSS RGB, CSS RGBA, Emacs RGB, Emacs ARGB, and C RGB output formats through their optional Lisp arguments. See the function documentation for argument order.
 
 ## Customization
