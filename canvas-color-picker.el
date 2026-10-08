@@ -1010,8 +1010,9 @@ Return the current coordinates when they are available."
         (erase-buffer)
         (setq-local canvas-color-picker--state state
                     cursor-type nil
-                    mode-line-format nil
                     truncate-lines t)
+        (when (eq (canvas-color-picker--state-display state) 'child-frame)
+          (setq-local mode-line-format nil))
         (use-local-map canvas-color-picker--mouse-map)
         (insert (canvas-color-picker--display-string canvas))
         (goto-char (point-min))

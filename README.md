@@ -52,7 +52,7 @@ M-x canvas-color-picker-insert
 M-x canvas-color-picker-at-point
 ```
 
-The picker opens in a child frame near point by default. Set `canvas-color-picker-display` to `buffer` to use a window instead. In buffer mode, the canvas fits the window and adjusts after a resize. Both modes require graphical canvas support.
+The picker opens in a child frame near point by default. Set `canvas-color-picker-display` to `buffer` to use a window instead. In buffer mode, the canvas fits the window, adjusts after a resize, and keeps its modeline. Both modes require graphical canvas support.
 
 Use the mouse on the saturation/value square or the hue strip. While you drag outside a control in the picker frame, the selection stays at its edge and tracks movement along that edge. The two swatches show the selected color and the initial color. Press `TAB` to move keyboard focus between the square and the strip. Arrow keys and `p`, `n`, `b`, `f` adjust the active region. Ctrl+Arrow and `C-p`, `C-n`, `C-b`, `C-f` use larger steps. `M-p` and `M-n` adjust hue directly. Press `RET` to accept, or `q` to cancel.
 

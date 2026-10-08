@@ -1517,6 +1517,28 @@
       (canvas-color-picker--cancel state)
       (should (equal (car messages) "other command")))))
 
+(ert-deftest canvas-color-picker-test-setup-buffer-keeps-mode-line-in-buffer-mode ()
+  "Buffer display keeps the picker buffer's mode line."
+  (with-temp-buffer
+    (let ((state (canvas-color-picker--state-create
+                  :display 'buffer
+                  :buffer (current-buffer)
+                  :canvas '(image :type canvas :id test))))
+      (setq-local mode-line-format '("Picker modeline"))
+      (canvas-color-picker--setup-buffer state)
+      (should (equal mode-line-format '("Picker modeline"))))))
+
+(ert-deftest canvas-color-picker-test-setup-buffer-hides-mode-line-in-child-frame ()
+  "Child-frame display hides the picker buffer's mode line."
+  (with-temp-buffer
+    (let ((state (canvas-color-picker--state-create
+                  :display 'child-frame
+                  :buffer (current-buffer)
+                  :canvas '(image :type canvas :id test))))
+      (setq-local mode-line-format '("Picker modeline"))
+      (canvas-color-picker--setup-buffer state)
+      (should-not mode-line-format))))
+
 (ert-deftest canvas-color-picker-test-setup-buffer-keeps-canvas-at-point ()
   "Point starts on the canvas display item."
   (with-temp-buffer
