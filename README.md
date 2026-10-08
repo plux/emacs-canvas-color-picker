@@ -1,7 +1,9 @@
 # Emacs canvas color picker
 
 This color picker lets you select colors with a canvas interface in
-Emacs. It can copy, insert, or replace colors in your buffer.
+Emacs 32. It can copy, insert, or replace colors in your buffer.
+
+https://github.com/user-attachments/assets/76bcc93a-4725-4b04-86c7-01aeee0fb7a5
 
 ## Install
 
@@ -21,14 +23,8 @@ Add this declaration to your Emacs configuration:
   not require Zig.
 
 The picker needs a native module. If the module is missing,
-interactive Emacs offers a download on Linux x86_64 or a local build
-with Zig. You can also skip setup without changing your buffer. If a
-matching release is unavailable, choose the local build. If
-installation fails after the module loads, restart Emacs before
-another attempt.
-
-Alternatively, load `canvas-color-picker.el` from this directory into
-a graphical Emacs frame.
+Emacs offers a download on Linux x86_64 or a local build
+with Zig. If a matching release is unavailable, choose the local build.
 
 ## Use
 
@@ -40,15 +36,11 @@ M-x canvas-color-picker-insert
 M-x canvas-color-picker-at-point
 ```
 
-The picker opens in a child frame near point by default. Both display
-modes require graphical canvas support.
+The picker opens in a child frame near point by default.
 
 Use these controls to select a color:
 
 - Click or drag on the saturation/value square or the hue strip.
-  If you drag outside a control, the selection stays at its edge
-  and tracks movement along that edge.
-- Check the two swatches for the selected and initial colors.
 - Press `TAB` to switch keyboard focus between the square and strip.
 - Use the arrow keys or `p`, `n`, `b`, `f` to adjust the active control.
   Use Ctrl+Arrow or `C-p`, `C-n`, `C-b`, `C-f` for larger steps.
@@ -57,10 +49,10 @@ Use these controls to select a color:
 
 `canvas-color-picker-at-point` acts on the buffer content:
 
-- If a region is active, it must contain one complete supported color.
-  The picker starts with that color and replaces the region on accept.
+- If a region is active, it must contain one complete supported color value.
+  The picker starts with that color value and replaces the region on accept.
   An invalid selection produces an error.
-- If no region is active and point is on a color, the picker starts
+- If no region is active and point is on a color value, the picker starts
   with that color and replaces it on accept.
 - If no region is active and there is no color at point, the picker
   inserts the selected color at point on accept.
@@ -77,19 +69,15 @@ Supported colors at point or in a selected region:
 - C RGB: `0x112233` (`0xRRGGBB`).
 - Bare RGB: `112233` (`RRGGBB`).
 
-If Embark is installed, run `embark-act` on a supported color or a
-valid selected color. Press `C-c p` to open the picker, or run
+If Embark is installed, run `embark-act` on a color value.
+Press `C-c p` to open the picker, or run
 `embark-dwim` to open it as the default action. The action does not
 appear for other text. Embark is not required to use the picker.
-
-Copy, insert, and read-color support CSS RGB, CSS RGBA, Emacs RGB,
-Emacs ARGB, and C RGB output formats. See the function documentation
-for their optional argument order.
 
 ## Customization
 
 Run `M-x customize-group RET canvas-color-picker RET` to change these
-options:
+options, or set them in your Emacs init file.
 
 - `canvas-color-picker-default-color`: `"#3399cc"`.
   Initial color when none is supplied.
@@ -105,12 +93,9 @@ options:
   Zig executable for automatic builds.
 - `canvas-color-picker-emacs-include-dir`: `vendor` in this package.
   Directory with Emacs 32 `emacs-module.h` for local builds.
-- `canvas-color-picker-trace-file`: `COLOR_PICKER_TRACE_FILE` or nil.
-  File for drag trace logs. Leave nil to disable tracing.
 
 Set `canvas-color-picker-display` to `buffer` to use a window instead
-of a child frame. In buffer mode, the canvas fits the window, adjusts
-after a resize, and keeps its modeline.
+of a child frame.
 
 `canvas-color-picker-inline-preview` controls temporary previews in
 the source buffer for insert and at-point. The original text stays
@@ -173,6 +158,29 @@ The repository includes `vendor/emacs-module.h` from GNU Emacs 32
 source commit `ed1fc1b6be1bb7f9365577527d13b8045b232160`. The
 header provides `canvas_data`. Its GNU GPL notice remains in the file.
 
+### Tests and benchmark
+
+```bash
+make test EMACS=/path/to/emacs32
+make lint EMACS=/path/to/emacs32
+make native-benchmark EMACS=/path/to/emacs32 EMACS_INCLUDE_DIR=vendor
+```
+
+`make lint` requires `zlint` on `PATH`. It checks Zig formatting,
+runs zlint, and byte-compiles the picker, tests, and benchmark. Byte
+compilation writes to `/dev/null` and treats warnings as errors.
+
+The ERT suite runs in batch Emacs. Its graphical child-frame test skips
+in batch mode. The benchmark runs native base, marker, and full
+rendering in batch Emacs.
+
+Set `COLOR_PICKER_BENCHMARK_SIZES`, `COLOR_PICKER_BENCHMARK_ITERATIONS`,
+and `COLOR_PICKER_BENCHMARK_BASE_ITERATIONS` to adjust its run.
+
+Use `make run-trace` to write drag diagnostics to
+`COLOR_PICKER_TRACE_FILE`. Its default path is
+`/tmp/color-picker-trace.log`.
+
 ### CI artifact and release
 
 The tag workflow builds a Linux x86_64 module with Zig 0.17.0 and
@@ -199,26 +207,3 @@ make test-release-local
 The target checks the local artifact ZIP, checksum, and module format.
 It uses local files, including uncommitted changes. It does not publish
 a release. A local run does not replace a GitHub runner check.
-
-### Tests and benchmark
-
-```bash
-make test EMACS=/path/to/emacs32
-make lint EMACS=/path/to/emacs32
-make native-benchmark EMACS=/path/to/emacs32 EMACS_INCLUDE_DIR=vendor
-```
-
-`make lint` requires `zlint` on `PATH`. It checks Zig formatting,
-runs zlint, and byte-compiles the picker, tests, and benchmark. Byte
-compilation writes to `/dev/null` and treats warnings as errors.
-
-The ERT suite runs in batch Emacs. Its graphical child-frame test skips
-in batch mode. The benchmark runs native base, marker, and full
-rendering in batch Emacs.
-
-Set `COLOR_PICKER_BENCHMARK_SIZES`, `COLOR_PICKER_BENCHMARK_ITERATIONS`,
-and `COLOR_PICKER_BENCHMARK_BASE_ITERATIONS` to adjust its run.
-
-Use `make run-trace` to write drag diagnostics to
-`COLOR_PICKER_TRACE_FILE`. Its default path is
-`/tmp/color-picker-trace.log`.
