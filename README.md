@@ -40,10 +40,8 @@ M-x canvas-color-picker-insert
 M-x canvas-color-picker-at-point
 ```
 
-The picker opens in a child frame near point by default. Set
-`canvas-color-picker-display` to `buffer` to use a window instead.
-In buffer mode, the canvas fits the window, adjusts after a resize,
-and keeps its modeline. Both modes require graphical canvas support.
+The picker opens in a child frame near point by default. Both display
+modes require graphical canvas support.
 
 Use these controls to select a color:
 
@@ -57,29 +55,32 @@ Use these controls to select a color:
 - Use `M-p` and `M-n` to adjust hue directly.
 - Press `RET` to accept the color, or `q` to cancel.
 
-`canvas-color-picker-at-point` uses an active region before the color
-at point. The region must contain one complete supported color. Accept
-replaces the selected text and keeps its format. Cancel leaves the text
-unchanged. An invalid selection produces an error.
+`canvas-color-picker-at-point` acts on the buffer content:
+
+- If a region is active, it must contain one complete supported color.
+  The picker starts with that color and replaces the region on accept.
+  An invalid selection produces an error.
+- If no region is active and point is on a color, the picker starts
+  with that color and replaces it on accept.
+- If no region is active and there is no color at point, the picker
+  inserts the selected color at point on accept.
+
+Replacement keeps the original color format, including any alpha
+value. Cancel leaves the buffer unchanged.
+
+Supported colors at point or in a selected region:
+
+- CSS RGB: `#112233` (`#RRGGBB`).
+- CSS RGBA: `#11223344` (`#RRGGBBAA`).
+- Emacs RGB: `#x112233` (`#xRRGGBB`).
+- Emacs ARGB: `#x44112233` (`#xAARRGGBB`).
+- C RGB: `0x112233` (`0xRRGGBB`).
+- Bare RGB: `112233` (`RRGGBB`).
 
 If Embark is installed, run `embark-act` on a supported color or a
 valid selected color. Press `C-c p` to open the picker, or run
 `embark-dwim` to open it as the default action. The action does not
 appear for other text. Embark is not required to use the picker.
-
-To use another Embark action key, add this to your Emacs
-configuration. This example replaces `C-c p` with `C-c c`:
-
-```emacs-lisp
-(with-eval-after-load 'canvas-color-picker
-  (define-key canvas-color-picker--embark-color-map (kbd "C-c p") nil)
-  (define-key canvas-color-picker--embark-color-map (kbd "C-c c")
-              #'canvas-color-picker-at-point))
-```
-
-`canvas-color-picker-inline-preview` controls temporary previews in
-the source buffer for insert and at-point. The original text stays
-unchanged until you accept the color.
 
 Copy, insert, and read-color support CSS RGB, CSS RGBA, Emacs RGB,
 Emacs ARGB, and C RGB output formats. See the function documentation
@@ -107,6 +108,14 @@ options:
 - `canvas-color-picker-trace-file`: `COLOR_PICKER_TRACE_FILE` or nil.
   File for drag trace logs. Leave nil to disable tracing.
 
+Set `canvas-color-picker-display` to `buffer` to use a window instead
+of a child frame. In buffer mode, the canvas fits the window, adjusts
+after a resize, and keeps its modeline.
+
+`canvas-color-picker-inline-preview` controls temporary previews in
+the source buffer for insert and at-point. The original text stays
+unchanged until you accept the color.
+
 For example, set buffer display and disable inline previews with
 `use-package`:
 
@@ -117,6 +126,16 @@ For example, set buffer display and disable inline previews with
   :custom
   (canvas-color-picker-display 'buffer)
   (canvas-color-picker-inline-preview nil))
+```
+
+To use another Embark action key, add this to your Emacs
+configuration. This example replaces `C-c p` with `C-c c`:
+
+```emacs-lisp
+(with-eval-after-load 'canvas-color-picker
+  (define-key canvas-color-picker--embark-color-map (kbd "C-c p") nil)
+  (define-key canvas-color-picker--embark-color-map (kbd "C-c c")
+              #'canvas-color-picker-at-point))
 ```
 
 ## Development
