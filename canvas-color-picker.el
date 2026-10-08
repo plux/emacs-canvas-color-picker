@@ -171,6 +171,9 @@ The picker keeps its layout proportions at other scale values."
 (defvar canvas-color-picker--active-state nil
   "Picker state currently open in a frame or window.")
 
+(defvar canvas-color-picker--drag-region nil
+  "Region selected by the current mouse-down gesture, or `none'.")
+
 (defvar canvas-color-picker--mouse-map
   (let ((map (make-sparse-keymap)))
     (define-key map [down-mouse-1] #'canvas-color-picker--mouse-down)
@@ -789,10 +792,27 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
 
 (defun canvas-color-picker--handle-coordinates (state coordinates)
   "Handle canvas-relative COORDINATES for STATE."
-  (let ((hit (canvas-color-picker--hit-test
-              (canvas-color-picker--state-geometry state)
-              (car coordinates)
-              (cdr coordinates))))
+  (let* ((geometry (canvas-color-picker--state-geometry state))
+         (region canvas-color-picker--drag-region)
+         (left (pcase region
+                 ('sv (canvas-color-picker--geometry-sv-left geometry))
+                 ('hue (canvas-color-picker--geometry-hue-left geometry))))
+         (top (pcase region
+                ('sv (canvas-color-picker--geometry-sv-top geometry))
+                ('hue (canvas-color-picker--geometry-hue-top geometry))))
+         (width (pcase region
+                  ('sv (canvas-color-picker--geometry-sv-width geometry))
+                  ('hue (canvas-color-picker--geometry-hue-width geometry))))
+         (height (pcase region
+                   ('sv (canvas-color-picker--geometry-sv-height geometry))
+                   ('hue (canvas-color-picker--geometry-hue-height geometry))))
+         (hit (unless (eq region 'none)
+                (canvas-color-picker--hit-test
+                 geometry
+                 (if left (max left (min (car coordinates) (+ left width -1)))
+                   (car coordinates))
+                 (if top (max top (min (cdr coordinates) (+ top height -1)))
+                   (cdr coordinates))))))
     (canvas-color-picker--trace
      "handle-coordinates"
      :coordinates coordinates
@@ -924,37 +944,45 @@ Return the current coordinates when they are available."
   (interactive "e")
   (canvas-color-picker--trace "mouse-down" :event-data (canvas-color-picker--trace-event event))
   (when-let* ((state (canvas-color-picker--state-for-event event)))
-    (canvas-color-picker--handle-event state event)
-    (let ((mouse-fine-grained-tracking t)
-          (tracking-window (posn-window (event-start event)))
-          (last-coordinates nil))
-      (track-mouse
-        (catch 'done
-          (while (not (canvas-color-picker--state-done state))
-            (canvas-color-picker--trace
-             "drag-poll-before-read"
-             :last-coordinates last-coordinates)
-            (setq last-coordinates
-                  (or (canvas-color-picker--track-current-pointer
-                       state tracking-window last-coordinates)
-                      last-coordinates))
-            (let ((next-event (read-event nil nil 0.02)))
+    (let* ((geometry (canvas-color-picker--state-geometry state))
+           (coordinates (and geometry (canvas-color-picker--event-coordinates event)))
+           (canvas-color-picker--drag-region
+            (when geometry
+              (or (and coordinates
+                       (plist-get (canvas-color-picker--hit-test
+                                   geometry (car coordinates) (cdr coordinates)) :region))
+                  'none))))
+      (canvas-color-picker--handle-event state event)
+      (let ((mouse-fine-grained-tracking t)
+            (tracking-window (posn-window (event-start event)))
+            (last-coordinates nil))
+        (track-mouse
+          (catch 'done
+            (while (not (canvas-color-picker--state-done state))
               (canvas-color-picker--trace
-               "drag-read-event"
-               :event-data (and next-event (canvas-color-picker--trace-event next-event)))
-              (cond
-               ((null next-event)
-                nil)
-               ((memq (car-safe next-event) '(mouse-movement switch-frame))
-                nil)
-               ((memq (car-safe next-event) '(mouse-1 drag-mouse-1))
-                (canvas-color-picker--trace "drag-release" :event-data (canvas-color-picker--trace-event next-event))
-                (canvas-color-picker--handle-event state next-event)
-                (throw 'done t))
-               (t
-                (canvas-color-picker--trace "drag-unread" :event-data (canvas-color-picker--trace-event next-event))
-                (push next-event unread-command-events)
-                (throw 'done nil))))))))))
+               "drag-poll-before-read"
+               :last-coordinates last-coordinates)
+              (setq last-coordinates
+                    (or (canvas-color-picker--track-current-pointer
+                         state tracking-window last-coordinates)
+                        last-coordinates))
+              (let ((next-event (read-event nil nil 0.02)))
+                (canvas-color-picker--trace
+                 "drag-read-event"
+                 :event-data (and next-event (canvas-color-picker--trace-event next-event)))
+                (cond
+                 ((null next-event)
+                  nil)
+                 ((memq (car-safe next-event) '(mouse-movement switch-frame))
+                  nil)
+                 ((memq (car-safe next-event) '(mouse-1 drag-mouse-1))
+                  (canvas-color-picker--trace "drag-release" :event-data (canvas-color-picker--trace-event next-event))
+                  (canvas-color-picker--handle-event state next-event)
+                  (throw 'done t))
+                 (t
+                  (canvas-color-picker--trace "drag-unread" :event-data (canvas-color-picker--trace-event next-event))
+                  (push next-event unread-command-events)
+                  (throw 'done nil)))))))))))
 
 (defun canvas-color-picker--make-canvas (geometry data)
   "Return a canvas image spec for GEOMETRY and DATA."

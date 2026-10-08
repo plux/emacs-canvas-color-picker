@@ -784,6 +784,21 @@
       (should (= (canvas-color-picker--state-saturation state) 1.0))
       (should (= (canvas-color-picker--state-value state) 0.5)))))
 
+(ert-deftest canvas-color-picker-test-mouse-click-outside-does-not-update ()
+  "A standalone click outside the controls does not change the color."
+  (let ((state (canvas-color-picker--state-create
+                :geometry (canvas-color-picker-test--small-geometry)
+                :hue 0.5 :saturation 0.5 :value 0.5)))
+    (cl-letf (((symbol-function 'canvas-color-picker--state-for-event)
+               (lambda (_event) state))
+              ((symbol-function 'canvas-color-picker--event-coordinates)
+               (lambda (_event) '(0 . 0)))
+              ((symbol-function 'canvas-color-picker--refresh)
+               (lambda (&rest _args) (ert-fail "Unexpected refresh"))))
+      (canvas-color-picker--mouse-click '(mouse-1))
+      (should (= (canvas-color-picker--state-saturation state) 0.5))
+      (should (= (canvas-color-picker--state-value state) 0.5)))))
+
 (ert-deftest canvas-color-picker-test-current-pointer-coordinates-account-for-status-line ()
   "Current pointer coordinates start at the canvas's first row."
   (cl-letf (((symbol-function 'window-live-p) (lambda (_window) t))
@@ -830,6 +845,14 @@
     (should (equal (canvas-color-picker--current-pointer-coordinates 'window)
                    '(40 . 50)))))
 
+(ert-deftest canvas-color-picker-test-current-pointer-coordinates-ignore-other-frame ()
+  "A pointer in another frame has no canvas-relative coordinates."
+  (cl-letf (((symbol-function 'window-live-p) (lambda (_window) t))
+            ((symbol-function 'mouse-pixel-position) (lambda () (list 'other-frame 50 70)))
+            ((symbol-function 'window-frame) (lambda (_window) 'picker-frame))
+            ((symbol-function 'window-inside-pixel-edges) (lambda (_window) '(10 20 200 220))))
+    (should-not (canvas-color-picker--current-pointer-coordinates 'window))))
+
 (ert-deftest canvas-color-picker-test-track-current-pointer-updates-through-canvas-refresh ()
   "Drag timeout updates from current pointer through the canvas refresh path."
   (let ((handled nil)
@@ -841,6 +864,61 @@
       (should (equal (canvas-color-picker--track-current-pointer state 'window) '(5 . 6)))
       (should (equal (canvas-color-picker--track-current-pointer state 'window '(5 . 6)) '(5 . 6)))
       (should (equal handled '((5 . 6)))))))
+
+(defun canvas-color-picker-test--drag-values (start moves release)
+  "Return HSV snapshots for a gesture from START through MOVES to RELEASE."
+  (let* ((geometry (canvas-color-picker-test--small-geometry))
+         (state (canvas-color-picker--state-create
+                 :geometry geometry :hue 0.5 :saturation 0.5 :value 0.5))
+         (positions (copy-sequence moves))
+         (events (append (make-list (length moves) '(mouse-movement))
+                         (list '(mouse-1))))
+         snapshots)
+    (cl-letf (((symbol-function 'canvas-color-picker--state-for-event)
+               (lambda (_event) state))
+              ((symbol-function 'canvas-color-picker--event-coordinates)
+               (lambda (event) (if (eq (car event) 'down-mouse-1) start release)))
+              ((symbol-function 'canvas-color-picker--current-pointer-coordinates)
+               (lambda (_window) (pop positions)))
+              ((symbol-function 'canvas-color-picker--refresh)
+               (lambda (state)
+                 (push (list (canvas-color-picker--state-hue state)
+                             (canvas-color-picker--state-saturation state)
+                             (canvas-color-picker--state-value state)) snapshots)))
+              ((symbol-function 'canvas-color-picker--update-status) #'ignore)
+              ((symbol-function 'posn-window) (lambda (_position) 'tracking-window))
+              ((symbol-function 'event-start) (lambda (_event) 'start-position))
+              ((symbol-function 'track-mouse) (lambda (&rest body) (eval `(progn ,@body))))
+              ((symbol-function 'read-event) (lambda (&rest _args) (pop events))))
+      (canvas-color-picker--mouse-down '(down-mouse-1))
+      (nreverse snapshots))))
+
+(ert-deftest canvas-color-picker-test-drag-sv-clamps-independent-axes ()
+  "A drag past each square edge tracks the other axis and stays in SV."
+  (let ((values (canvas-color-picker-test--drag-values
+                 '(2 . 2) '((-9 . 1) (-9 . 4) (99 . 2) (6 . 3) (2 . -9)) '(99 . 99))))
+    (should (equal values '((0.5 0.3333333333333333 0.6666666666666667)
+                            (0.5 0.0 1.0)
+                            (0.5 0.0 0.0)
+                            (0.5 1.0 0.6666666666666667)
+                            (0.5 1.0 0.33333333333333337)
+                            (0.5 0.3333333333333333 1.0)
+                            (0.5 1.0 0.0))))))
+
+(ert-deftest canvas-color-picker-test-drag-hue-stays-in-strip ()
+  "A hue drag clamps top and bottom without selecting the square."
+  (let ((values (canvas-color-picker-test--drag-values
+                 '(6 . 2) '((2 . -9) (2 . 99) (5 . 3)) '(99 . 1))))
+    (should (equal values '((0.3333333333333333 0.5 0.5)
+                            (0.0 0.5 0.5)
+                            (1.0 0.5 0.5)
+                            (0.6666666666666666 0.5 0.5)
+                            (0.0 0.5 0.5))))))
+
+(ert-deftest canvas-color-picker-test-drag-start-outside-does-not-select ()
+  "A press outside the controls does not activate a clamped drag."
+  (should-not (canvas-color-picker-test--drag-values
+               '(0 . 0) '((2 . 2)) '(2 . 3))))
 
 (ert-deftest canvas-color-picker-test-mouse-down-ignores-switch-frame-during-drag ()
   "Switch-frame events during drag do not terminate pointer polling."
