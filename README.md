@@ -10,9 +10,7 @@ Add this declaration to your Emacs configuration:
 ```emacs-lisp
 (use-package canvas-color-picker
   :vc (:url "https://github.com/plux/emacs-canvas-color-picker" :rev :newest)
-  :commands (canvas-color-picker-copy
-             canvas-color-picker-insert
-             canvas-color-picker-at-point))
+  :defer t)
 ```
 
 ### Requirements
@@ -115,9 +113,7 @@ For example, set buffer display and disable inline previews with
 ```emacs-lisp
 (use-package canvas-color-picker
   :vc (:url "https://github.com/plux/emacs-canvas-color-picker" :rev :newest)
-  :commands (canvas-color-picker-copy
-             canvas-color-picker-insert
-             canvas-color-picker-at-point)
+  :defer t
   :custom
   (canvas-color-picker-display 'buffer)
   (canvas-color-picker-inline-preview nil))

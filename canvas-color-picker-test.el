@@ -1274,8 +1274,25 @@
         :buffer (current-buffer)
         :canvas '(image :type canvas :id test)
         :hue 0.0 :saturation 1.0 :value 1.0))
-      (should (eq (key-binding (kbd "RET")) #'canvas-color-picker--accept))
-      (should (eq (key-binding (kbd "q")) #'canvas-color-picker--cancel)))))
+      (should (commandp (key-binding (kbd "RET"))))
+      (should (commandp (key-binding (kbd "q")))))))
+
+(ert-deftest canvas-color-picker-test-private-handlers-not-commands ()
+  "Only public picker functions appear among interactive commands."
+  (dolist (handler '(canvas-color-picker--up canvas-color-picker--down
+                     canvas-color-picker--left canvas-color-picker--right
+                     canvas-color-picker--up-large canvas-color-picker--down-large
+                     canvas-color-picker--left-large canvas-color-picker--right-large
+                     canvas-color-picker--hue-up canvas-color-picker--hue-down
+                     canvas-color-picker--toggle-region
+                     canvas-color-picker--accept canvas-color-picker--cancel
+                     canvas-color-picker--mouse-down canvas-color-picker--mouse-click
+                     canvas-color-picker--mouse-drag))
+    (should-not (commandp handler)))
+  (dolist (key '("p" "C-f" "TAB" "RET" "q"))
+    (should (commandp (lookup-key canvas-color-picker--mouse-map (kbd key)))))
+  (dolist (key '([down-mouse-1] [mouse-1] [drag-mouse-1]))
+    (should (commandp (lookup-key canvas-color-picker--mouse-map key)))))
 
 (ert-deftest canvas-color-picker-test-keyboard-navigation-square ()
   "Keyboard movement uses fixed fine and coarse HSV steps in the square."

@@ -179,16 +179,18 @@ The picker keeps its layout proportions at other scale values."
 
 (defvar canvas-color-picker--mouse-map
   (let ((map (make-sparse-keymap)))
-    (define-key map [down-mouse-1] #'canvas-color-picker--mouse-down)
-    (define-key map [mouse-1] #'canvas-color-picker--mouse-click)
-    (define-key map [drag-mouse-1] #'canvas-color-picker--mouse-drag)
-    (define-key map (kbd "RET") #'canvas-color-picker--accept)
-    (define-key map (kbd "C-m") #'canvas-color-picker--accept)
-    (define-key map (kbd "C-c C-c") #'canvas-color-picker--accept)
-    (define-key map (kbd "C-g") #'canvas-color-picker--cancel)
-    (define-key map (kbd "q") #'canvas-color-picker--cancel)
-    (define-key map (kbd "<escape>") #'canvas-color-picker--cancel)
-    (define-key map (kbd "C-c C-k") #'canvas-color-picker--cancel)
+    (dolist (binding '(([down-mouse-1] . canvas-color-picker--mouse-down)
+                       ([mouse-1] . canvas-color-picker--mouse-click)
+                       ([drag-mouse-1] . canvas-color-picker--mouse-drag)))
+      (let ((handler (cdr binding)))
+        (define-key map (car binding)
+          (lambda (event) (interactive "e") (funcall handler event)))))
+    (dolist (key '("RET" "C-m" "C-c C-c"))
+      (define-key map (kbd key)
+        (lambda () (interactive) (canvas-color-picker--accept))))
+    (dolist (key '("C-g" "q" "<escape>" "C-c C-k"))
+      (define-key map (kbd key)
+        (lambda () (interactive) (canvas-color-picker--cancel))))
     (dolist (binding '(("<up>" . canvas-color-picker--up)
                        ("p" . canvas-color-picker--up)
                        ("<down>" . canvas-color-picker--down)
@@ -208,7 +210,9 @@ The picker keeps its layout proportions at other scale values."
                        ("M-p" . canvas-color-picker--hue-up)
                        ("M-n" . canvas-color-picker--hue-down)
                        ("TAB" . canvas-color-picker--toggle-region)))
-      (define-key map (kbd (car binding)) (cdr binding)))
+      (let ((handler (cdr binding)))
+        (define-key map (kbd (car binding))
+          (lambda () (interactive) (funcall handler)))))
     map)
   "Key and mouse map attached to the canvas display string.")
 
@@ -730,20 +734,19 @@ When NOERROR is non-nil, return nil instead of signaling load errors."
           (canvas-color-picker--refresh state)
           (canvas-color-picker--update-status state)))))))
 
-(defun canvas-color-picker--up () (interactive) (canvas-color-picker--move 'up nil))
-(defun canvas-color-picker--down () (interactive) (canvas-color-picker--move 'down nil))
-(defun canvas-color-picker--left () (interactive) (canvas-color-picker--move 'left nil))
-(defun canvas-color-picker--right () (interactive) (canvas-color-picker--move 'right nil))
-(defun canvas-color-picker--up-large () (interactive) (canvas-color-picker--move 'up t))
-(defun canvas-color-picker--down-large () (interactive) (canvas-color-picker--move 'down t))
-(defun canvas-color-picker--left-large () (interactive) (canvas-color-picker--move 'left t))
-(defun canvas-color-picker--right-large () (interactive) (canvas-color-picker--move 'right t))
-(defun canvas-color-picker--hue-up () (interactive) (canvas-color-picker--move 'up nil t))
-(defun canvas-color-picker--hue-down () (interactive) (canvas-color-picker--move 'down nil t))
+(defun canvas-color-picker--up () (canvas-color-picker--move 'up nil))
+(defun canvas-color-picker--down () (canvas-color-picker--move 'down nil))
+(defun canvas-color-picker--left () (canvas-color-picker--move 'left nil))
+(defun canvas-color-picker--right () (canvas-color-picker--move 'right nil))
+(defun canvas-color-picker--up-large () (canvas-color-picker--move 'up t))
+(defun canvas-color-picker--down-large () (canvas-color-picker--move 'down t))
+(defun canvas-color-picker--left-large () (canvas-color-picker--move 'left t))
+(defun canvas-color-picker--right-large () (canvas-color-picker--move 'right t))
+(defun canvas-color-picker--hue-up () (canvas-color-picker--move 'up nil t))
+(defun canvas-color-picker--hue-down () (canvas-color-picker--move 'down nil t))
 
 (defun canvas-color-picker--toggle-region ()
   "Switch keyboard focus between the square and the hue strip."
-  (interactive)
   (when-let* ((state canvas-color-picker--state))
     (setf (canvas-color-picker--state-active-region state)
           (if (eq (canvas-color-picker--state-active-region state) 'sv) 'hue 'sv))
@@ -886,7 +889,6 @@ Return the current coordinates when they are available."
 
 (defun canvas-color-picker--accept (&optional state)
   "Accept the current color for STATE."
-  (interactive)
   (let ((state (or state canvas-color-picker--state)))
     (when (and state (not (canvas-color-picker--state-done state)))
       (setf (canvas-color-picker--state-done state) t)
@@ -897,7 +899,6 @@ Return the current coordinates when they are available."
 
 (defun canvas-color-picker--cancel (&optional state)
   "Cancel color picker STATE."
-  (interactive)
   (let ((state (or state canvas-color-picker--state)))
     (when state
       (setf (canvas-color-picker--state-done state) t)
@@ -932,19 +933,16 @@ Return the current coordinates when they are available."
 
 (defun canvas-color-picker--mouse-click (event)
   "Handle single click EVENT."
-  (interactive "e")
   (when-let* ((state (canvas-color-picker--state-for-event event)))
     (canvas-color-picker--handle-event state event)))
 
 (defun canvas-color-picker--mouse-drag (event)
   "Handle drag EVENT."
-  (interactive "e")
   (when-let* ((state (canvas-color-picker--state-for-event event)))
     (canvas-color-picker--handle-event state event)))
 
 (defun canvas-color-picker--mouse-down (event)
   "Track a color picker mouse gesture from down EVENT."
-  (interactive "e")
   (canvas-color-picker--trace "mouse-down" :event-data (canvas-color-picker--trace-event event))
   (when-let* ((state (canvas-color-picker--state-for-event event)))
     (let* ((geometry (canvas-color-picker--state-geometry state))
