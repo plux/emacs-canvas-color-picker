@@ -1,7 +1,7 @@
 ;;; canvas-color-picker.el --- Canvas color picker widget -*- lexical-binding: t; -*-
 ;; Copyright (c) 2026 Håkan Nilsson
 ;; SPDX-License-Identifier: GPL-3.0-or-later
-;; Version: 0.4.0
+;; Version: 0.5.0
 
 ;;; Commentary:
 ;; Elisp color picker UI with native rendering for Emacs 32 canvas images.
@@ -19,7 +19,7 @@
 (defvar embark-keymap-alist)
 
 ;; Keep this value in sync with the Version header for matching release assets.
-(defconst canvas-color-picker-version "0.4.0"
+(defconst canvas-color-picker-version "0.5.0"
   "Release version used to select a matching native module.")
 
 (defconst canvas-color-picker--max-download-bytes (* 1024 1024)
