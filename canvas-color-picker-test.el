@@ -11,6 +11,11 @@
 (add-to-list 'load-path canvas-color-picker-test--project-dir)
 (require 'canvas-color-picker)
 
+(defvar embark-general-map)
+(defvar embark-target-finders)
+(declare-function embark--targets "embark")
+(declare-function embark-dwim "embark")
+
 (defun canvas-color-picker-test--close-to (actual expected &optional tolerance)
   "Return non-nil when ACTUAL is within TOLERANCE of EXPECTED."
   (<= (abs (- actual expected)) (or tolerance 0.001)))
@@ -2799,6 +2804,113 @@
           (should (= opened 0))
           (should (equal kill-ring '("original")))
           (should (equal (buffer-string) "keep")))))))
+
+(ert-deftest canvas-color-picker-test-embark-color-action ()
+  "Only color targets offer the picker action."
+  (skip-unless (require 'embark nil t))
+  (should-not (eq (lookup-key embark-general-map (kbd "C-c p"))
+                  #'canvas-color-picker-at-point))
+  (should (memq #'canvas-color-picker--embark-target embark-target-finders))
+  (should (eq (lookup-key canvas-color-picker--embark-color-map (kbd "C-c p"))
+              #'canvas-color-picker-at-point))
+  (should (eq (lookup-key canvas-color-picker--embark-color-map (kbd "w"))
+              'embark-copy-as-kill)))
+
+(ert-deftest canvas-color-picker-test-embark-dwim-opens-color-picker ()
+  "Embark DWIM opens the picker for a supported color at point."
+  (skip-unless (require 'embark nil t))
+  (save-window-excursion
+    (with-temp-buffer
+      (insert "#f00f00")
+      (goto-char (point-max))
+      (set-window-buffer (selected-window) (current-buffer))
+      (let (opened)
+        (cl-letf (((symbol-function 'canvas-color-picker--open-state)
+                   (lambda (state) (setq opened state))))
+          (embark-dwim)
+          (should opened)
+          (should (equal (canvas-color-picker--output-text opened) "#f00f00")))))))
+
+(ert-deftest canvas-color-picker-test-embark-removes-old-general-action ()
+  "Reloading after the general prototype leaves no general picker action."
+  (skip-unless (require 'embark nil t))
+  (let ((embark-general-map (copy-keymap embark-general-map)))
+    (define-key embark-general-map (kbd "C-c p") #'canvas-color-picker-at-point)
+    (canvas-color-picker--register-embark)
+    (should-not (eq (lookup-key embark-general-map (kbd "C-c p"))
+                    #'canvas-color-picker-at-point))))
+
+(ert-deftest canvas-color-picker-test-embark-target-discovery ()
+  "Only a supported color adds a picker target to Embark's target list."
+  (skip-unless (require 'embark nil t))
+  (dolist (case '(("#ff00ff" . t) ("ordinary text" . nil)))
+    (with-temp-buffer
+      (insert (car case))
+      (goto-char (point-max))
+      (should (eq (and (memq 'canvas-color-picker-color
+                             (mapcar (lambda (target) (plist-get target :type))
+                                     (embark--targets)))
+                       t)
+                  (cdr case))))))
+
+(ert-deftest canvas-color-picker-test-embark-color-bounds-highlight ()
+  "Embark can highlight a color target with its discovered bounds."
+  (skip-unless (require 'embark nil t))
+  (with-temp-buffer
+    (insert "before #f00f00 after")
+    (goto-char 15)
+    (let* ((target (cl-find 'canvas-color-picker-color (embark--targets)
+                            :key (lambda (item) (plist-get item :type))))
+           (bounds (plist-get target :bounds)))
+      (should target)
+      (let ((overlay (make-overlay (car bounds) (cdr bounds))))
+        (should (= (overlay-start overlay) 8))
+        (should (= (overlay-end overlay) 15))))))
+
+(ert-deftest canvas-color-picker-test-embark-color-at-point ()
+  "Embark finds complete supported colors, including at their end."
+  (skip-unless (require 'embark nil t))
+  (dolist (color '("#ff00ff" "#ff00ff80" "#xAF112233" "#x112233"
+                   "0x112233" "112233"))
+    (with-temp-buffer
+      (insert "before " color " after")
+      (goto-char (+ 8 (length color)))
+      (should (equal (canvas-color-picker--embark-target)
+                     (cons 'canvas-color-picker-color
+                           (cons color (cons 8 (+ 8 (length color))))))))))
+
+(ert-deftest canvas-color-picker-test-embark-color-target-priority ()
+  "An invalid active region masks a color at point; a valid one is targeted."
+  (skip-unless (require 'embark nil t))
+  (with-temp-buffer
+    (let ((transient-mark-mode t))
+      (insert "#ff00ff #112233")
+      (goto-char 8)
+      (push-mark 9 t t)
+      (should-not (canvas-color-picker--embark-target))
+      (set-mark 9)
+      (goto-char (point-max))
+      (activate-mark)
+      (should (equal (canvas-color-picker--embark-target)
+                     '(canvas-color-picker-color "#112233" 9 . 16))))))
+
+(ert-deftest canvas-color-picker-test-embark-ignores-minibuffer ()
+  "Hex text in the minibuffer does not replace an Embark completion target."
+  (skip-unless (require 'embark nil t))
+  (with-temp-buffer
+    (insert "#ff00ff")
+    (goto-char (point-max))
+    (cl-letf (((symbol-function 'minibufferp) (lambda (&optional _buffer) t)))
+      (should-not (canvas-color-picker--embark-target)))))
+
+(ert-deftest canvas-color-picker-test-embark-ignores-non-colors ()
+  "Embark does not offer the picker for text or partial hex tokens."
+  (skip-unless (require 'embark nil t))
+  (dolist (text '("ordinary text" "#ff00ff0" "abcdeff" "#12345"))
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-max))
+      (should-not (canvas-color-picker--embark-target)))))
 
 (provide 'canvas-color-picker-test)
 

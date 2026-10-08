@@ -14,6 +14,9 @@
 (require 'url-http)
 
 (defvar url-http-response-status)
+(defvar embark-general-map)
+(defvar embark-target-finders)
+(defvar embark-keymap-alist)
 
 ;; Keep this value in sync with the Version header for matching release assets.
 (defconst canvas-color-picker-version "0.4.0"
@@ -1446,6 +1449,45 @@ An explicit second argument INLINE-PREVIEW overrides the Customize default."
    (canvas-color-picker--make-at-point-state
     (current-buffer) display
     (if inline-preview (car inline-preview) canvas-color-picker-inline-preview))))
+
+(defun canvas-color-picker--embark-target ()
+  "Return an Embark target for a complete hex color at point or in the region."
+  (unless (minibufferp)
+    (let ((match (if (use-region-p)
+                     (let ((start (region-beginning))
+                           (end (region-end)))
+                       (save-restriction
+                         (narrow-to-region start end)
+                         (save-excursion
+                           (goto-char start)
+                           (let ((selected (canvas-color-picker--hex-at-point-bounds)))
+                             (and selected (= (plist-get selected :end) end) selected)))))
+                   (canvas-color-picker--hex-at-point-bounds))))
+      (when match
+        (cons 'canvas-color-picker-color
+              (cons (plist-get match :text)
+                    (cons (plist-get match :start)
+                          (plist-get match :end))))))))
+
+(defvar canvas-color-picker--embark-color-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c p") #'canvas-color-picker-at-point)
+    (define-key map (kbd "RET") #'canvas-color-picker-at-point)
+    map)
+  "Embark actions for a hex color under point or in the active region.")
+
+(defun canvas-color-picker--register-embark ()
+  "Register the color target and its Embark action."
+  (when (eq (lookup-key embark-general-map (kbd "C-c p"))
+            #'canvas-color-picker-at-point)
+    (define-key embark-general-map (kbd "C-c p") nil))
+  (set-keymap-parent canvas-color-picker--embark-color-map embark-general-map)
+  (add-hook 'embark-target-finders #'canvas-color-picker--embark-target)
+  (add-to-list 'embark-keymap-alist
+               '(canvas-color-picker-color . canvas-color-picker--embark-color-map)))
+
+(with-eval-after-load 'embark
+  (canvas-color-picker--register-embark))
 
 (provide 'canvas-color-picker)
 

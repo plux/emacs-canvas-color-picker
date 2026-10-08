@@ -58,6 +58,17 @@ Use the mouse on the saturation/value square or the hue strip. While you drag ou
 
 `canvas-color-picker-at-point` uses an active region before the color at point. The region must contain one complete supported color. Accept replaces the selected text and keeps its format. Cancel leaves the text unchanged. An invalid selection produces an error.
 
+If Embark is installed, run `embark-act` on a supported color or a valid selected color. Press `C-c p` to open `canvas-color-picker-at-point`, or run `embark-dwim` to open it as the default action. The action does not appear for other text. Embark is not required to use the picker.
+
+To use another Embark action key, add this to your Emacs configuration. This example replaces `C-c p` with `C-c c`:
+
+```emacs-lisp
+(with-eval-after-load 'canvas-color-picker
+  (define-key canvas-color-picker--embark-color-map (kbd "C-c p") nil)
+  (define-key canvas-color-picker--embark-color-map (kbd "C-c c")
+              #'canvas-color-picker-at-point))
+```
+
 `canvas-color-picker-inline-preview` controls temporary source-buffer previews for insert and at-point. The original text stays unchanged until accept. Copy, insert, and read-color support CSS RGB, CSS RGBA, Emacs RGB, Emacs ARGB, and C RGB output formats through their optional Lisp arguments. See the function documentation for argument order.
 
 ## Customization
