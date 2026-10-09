@@ -20,7 +20,7 @@ jobs:
             platform: linux-x86_64
             target: x86_64-linux-gnu.2.35
             cpu: baseline
-          - os: macos-26
+          - os: ubuntu-24.04
             platform: macos-aarch64
             target: aarch64-macos
             cpu: baseline

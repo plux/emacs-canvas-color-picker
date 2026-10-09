@@ -184,9 +184,10 @@ Use `make run-trace` to write drag diagnostics to
 
 ### CI artifact and release
 
-The tag workflow builds Linux x86_64 and macOS ARM64 modules with
-Zig 0.17.0 and the vendored header. It uploads each module and its
-SHA-256 file as a separate GitHub Actions artifact. It does not run
+The tag workflow builds Linux x86_64 and macOS ARM64 modules on Ubuntu
+runners with Zig 0.17.0 and the vendored header. Zig cross-compiles the
+macOS module. The workflow uploads each module and its SHA-256 file as
+a separate GitHub Actions artifact. It does not run
 Emacs or publish a GitHub release. Keep the `Version:` header and
 `canvas-color-picker-version` equal. The temporary
 `hn/color-picker-macos-arm64-ci` branch also runs this matrix for
