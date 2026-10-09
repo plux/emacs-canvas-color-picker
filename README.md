@@ -22,9 +22,10 @@ Add this declaration to your Emacs configuration:
 - Zig 0.17.0 if you build the module locally. A release download does
   not require Zig.
 
-The picker needs a native module. If the module is missing,
-Emacs offers a download on Linux x86_64 or a local build
-with Zig. If a matching release is unavailable, choose the local build.
+The picker needs a native module. If the module is missing, Emacs offers
+a matching release download on Linux x86_64 and macOS ARM64 when the
+release includes that asset. Other platforms can build locally with Zig.
+If a matching release asset is unavailable, choose the local build.
 
 ## Use
 
@@ -183,10 +184,13 @@ Use `make run-trace` to write drag diagnostics to
 
 ### CI artifact and release
 
-The tag workflow builds a Linux x86_64 module with Zig 0.17.0 and
-the vendored header. It uploads the binary and SHA-256 file as a GitHub
-Actions artifact. It does not run Emacs or publish a GitHub release.
-Keep the `Version:` header and `canvas-color-picker-version` equal.
+The tag workflow builds Linux x86_64 and macOS ARM64 modules with
+Zig 0.17.0 and the vendored header. It uploads each module and its
+SHA-256 file as a separate GitHub Actions artifact. It does not run
+Emacs or publish a GitHub release. Keep the `Version:` header and
+`canvas-color-picker-version` equal. The temporary
+`hn/color-picker-macos-arm64-ci` branch also runs this matrix for
+GitHub runner validation.
 
 The package uses release assets from its matching version tag. It
 checks the binary checksum and native API before use. A GitHub Actions
@@ -204,6 +208,10 @@ Select a reachable Docker context. Then run:
 make test-release-local
 ```
 
-The target checks the local artifact ZIP, checksum, and module format.
-It uses local files, including uncommitted changes. It does not publish
-a release. A local run does not replace a GitHub runner check.
+The target runs only the Linux matrix build in `act`. It checks the
+artifact ZIP, checksum, and ELF format. It uses local files, including
+uncommitted changes. It does not publish a release.
+
+Use `bash scripts/test-release-local.sh --check-artifact macos-aarch64 ZIP`
+to check a macOS artifact's names, checksum, and Mach-O format. Neither
+check proves that the module loads on macOS.

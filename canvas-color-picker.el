@@ -427,9 +427,16 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
 
 (defun canvas-color-picker--release-asset ()
   "Return the exact release asset for this host, or nil."
-  (when (and (eq system-type 'gnu/linux)
-             (string-prefix-p "x86_64-" system-configuration))
-    (format "canvas-color-picker-module-v%s-linux-x86_64.so" canvas-color-picker-version)))
+  (let ((platform (cond ((and (eq system-type 'gnu/linux)
+                             (string-prefix-p "x86_64-" system-configuration))
+                         "linux-x86_64")
+                        ((and (eq system-type 'darwin)
+                              (or (string-prefix-p "arm64-" system-configuration)
+                                  (string-prefix-p "aarch64-" system-configuration)))
+                         "macos-aarch64"))))
+    (when platform
+      (format "canvas-color-picker-module-v%s-%s.so"
+              canvas-color-picker-version platform))))
 
 (defun canvas-color-picker--check-native-api ()
   "Reject a native renderer with an incompatible API."
@@ -493,7 +500,7 @@ When PARENT-FRAME is non-nil, target ten of its character heights in width."
             (kill-buffer buffer)))))))
 
 (defun canvas-color-picker-download-module ()
-  "Install the matching Linux x86_64 release module after verification."
+  "Install the matching release module for this host after verification."
   (interactive)
   (let* ((asset (canvas-color-picker--release-asset))
          (destination canvas-color-picker-native-module-file)

@@ -2,6 +2,8 @@ name: Build native module artifact
 
 on:
   push:
+    branches:
+      - hn/color-picker-macos-arm64-ci
     tags:
       - 'v*'
 
@@ -9,8 +11,20 @@ permissions:
   contents: read
 
 jobs:
-  linux-x86_64:
-    runs-on: ubuntu-24.04
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            target: x86_64-linux-gnu.2.35
+            cpu: baseline
+          - os: macos-26
+            platform: macos-aarch64
+            target: aarch64-macos
+            cpu: baseline
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Match tag to package version
@@ -20,26 +34,29 @@ jobs:
           download_version=$(sed -n 's/^(defconst canvas-color-picker-version "\([0-9][0-9.]*\)"$/\1/p' canvas-color-picker.el)
           test -n "$version"
           test "$version" = "$download_version"
-          test "${GITHUB_REF_NAME}" = "v${version}"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "${GITHUB_REF_NAME}" = "v${version}"
+          fi
+          echo "ASSET_TAG=v${version}" >> "$GITHUB_ENV"
       - name: Install Zig 0.17.0 with cache
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
-          cache-key: x86_64-linux-gnu.2.35-baseline
+          cache-key: ${{ matrix.target }}-${{ matrix.cpu }}
           use-tool-cache: true
       - name: Build native module with vendored Emacs 32 header
-        run: zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline
+        run: zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=${{ matrix.target }} -Dcpu=${{ matrix.cpu }}
       - name: Package module and checksum
         shell: bash
         run: |
-          asset="canvas-color-picker-module-${GITHUB_REF_NAME}-linux-x86_64.so"
+          asset="canvas-color-picker-module-${ASSET_TAG}-${{ matrix.platform }}.so"
           cp zig-out/lib/canvas-color-picker-module.so "$asset"
-          sha256sum "$asset" > "$asset.sha256"
-          sha256sum --check "$asset.sha256"
+          shasum -a 256 "$asset" > "$asset.sha256"
+          shasum -a 256 -c "$asset.sha256"
           mkdir -p release-assets
           mv "$asset" "$asset.sha256" release-assets/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: linux-x86_64
+          name: ${{ matrix.platform }}
           path: release-assets/
           if-no-files-found: error

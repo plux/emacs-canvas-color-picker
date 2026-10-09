@@ -254,7 +254,7 @@
 (ert-deftest canvas-color-picker-test-native-batch-and-unsupported-build ()
   "Batch use and unsupported hosts build without a network request."
   (dolist (host '((t gnu/linux "x86_64-pc-linux-gnu")
-                  (nil darwin "aarch64-apple-darwin")))
+                  (nil darwin "x86_64-apple-darwin")))
     (let ((noninteractive (nth 0 host))
           (system-type (nth 1 host))
           (system-configuration (nth 2 host))
@@ -384,6 +384,23 @@
           (should (= (file-attribute-size (file-attributes path)) 0)))
       (delete-file path))))
 
+(ert-deftest canvas-color-picker-test-native-release-asset-platforms ()
+  "Select a release module only for supported host platforms."
+  (dolist (case `((gnu/linux "x86_64-pc-linux-gnu"
+                             ,(format "canvas-color-picker-module-v%s-linux-x86_64.so"
+                                      canvas-color-picker-version))
+                  (darwin "arm64-apple-darwin23.1.0"
+                          ,(format "canvas-color-picker-module-v%s-macos-aarch64.so"
+                                   canvas-color-picker-version))
+                  (darwin "aarch64-apple-darwin23.1.0"
+                          ,(format "canvas-color-picker-module-v%s-macos-aarch64.so"
+                                   canvas-color-picker-version))
+                  (darwin "x86_64-apple-darwin" nil)
+                  (gnu/linux "aarch64-unknown-linux-gnu" nil)))
+    (let ((system-type (nth 0 case))
+          (system-configuration (nth 1 case)))
+      (should (equal (canvas-color-picker--release-asset) (nth 2 case))))))
+
 (ert-deftest canvas-color-picker-test-native-download-verifies-and-installs ()
   "Install only the exact release asset with a matching checksum."
   (let* ((directory (make-temp-file "picker-install-" t))
@@ -416,6 +433,44 @@
           (should (canvas-color-picker-download-module))
           (should (equal (with-temp-buffer (insert-file-contents-literally destination) (buffer-string)) bytes))
           (should (= (length calls) 2)))
+      (when (file-exists-p destination) (delete-file destination))
+      (delete-directory directory))))
+
+(ert-deftest canvas-color-picker-test-native-download-macos-arm64 ()
+  "Install the macOS ARM64 release asset with its matching checksum."
+  (let* ((system-type 'darwin)
+         (system-configuration "arm64-apple-darwin23.1.0")
+         (directory (make-temp-file "picker-macos-install-" t))
+         (destination (expand-file-name "module.so" directory))
+         (canvas-color-picker-native-module-file destination)
+         (canvas-color-picker--native-loaded nil)
+         (canvas-color-picker--native-restart-required nil)
+         (asset (format "canvas-color-picker-module-v%s-macos-aarch64.so"
+                        canvas-color-picker-version))
+         (base (format "https://github.com/plux/emacs-canvas-color-picker/releases/download/v%s/"
+                       canvas-color-picker-version))
+         (bytes "macOS native binary fixture")
+         (calls nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'canvas-color-picker--fetch-asset)
+                   (lambda (url path)
+                     (push url calls)
+                     (with-temp-file path
+                       (insert (if (string-suffix-p ".sha256" url)
+                                   (format "%s  %s\n" (secure-hash 'sha256 bytes) asset)
+                                 bytes)))))
+                  ((symbol-function 'module-load)
+                   (lambda (path)
+                     (should (file-exists-p path))
+                     (canvas-color-picker-test--register-native-functions)))
+                  ((symbol-function 'canvas-color-picker-native-api-version) (lambda () 2))
+                  ((symbol-function 'canvas-color-picker-native-render-full) (lambda (&rest _) t)))
+          (should (canvas-color-picker-download-module))
+          (should (equal (nreverse calls)
+                         (list (concat base asset ".sha256") (concat base asset))))
+          (should (equal (with-temp-buffer
+                           (insert-file-contents-literally destination)
+                           (buffer-string)) bytes)))
       (when (file-exists-p destination) (delete-file destination))
       (delete-directory directory))))
 
