@@ -14,9 +14,9 @@ if [[ "$version" != "$download_version" ]]; then
   echo 'Version header and downloader version differ' >&2
   exit 1
 fi
-platform=linux-x86_64
+platforms=(linux-x86_64 macos-aarch64)
 if [[ "${1:-}" == --check-artifact && $# -eq 3 ]]; then
-  platform=$2
+  platforms=("$2")
   artifact=$3
 elif [[ $# -eq 0 ]]; then
   for command in act docker python3; do
@@ -33,7 +33,6 @@ elif [[ $# -eq 0 ]]; then
   mkdir "$run_dir/artifacts"
   DOCKER_HOST="$docker_host" act push \
     -W .github/workflows/release.yml -e "$run_dir/event.json" \
-    --matrix platform:linux-x86_64 \
     -P ubuntu-24.04=ghcr.io/catthehacker/ubuntu:act-24.04 \
     --container-architecture linux/amd64 --container-daemon-socket - \
     --artifact-server-path "$run_dir/artifacts" --pull=false
@@ -43,6 +42,7 @@ else
   exit 2
 fi
 
+for platform in "${platforms[@]}"; do
 python3 - "$artifact" "$platform" "$version" <<'PY'
 import hashlib
 from pathlib import Path
@@ -84,3 +84,4 @@ else:
         raise SystemExit('Artifact is not a macOS ARM64 Mach-O module')
 print(f'Validated {source}: {asset} SHA-256 {actual}')
 PY
+done

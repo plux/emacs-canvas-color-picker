@@ -184,14 +184,14 @@ Use `make run-trace` to write drag diagnostics to
 
 ### CI artifact and release
 
-The tag workflow builds Linux x86_64 and macOS ARM64 modules on Ubuntu
-runners with Zig 0.17.0 and the vendored header. Zig cross-compiles the
-macOS module. The workflow uploads each module and its SHA-256 file as
-a separate GitHub Actions artifact. It does not run
-Emacs or publish a GitHub release. Keep the `Version:` header and
-`canvas-color-picker-version` equal. The temporary
-`hn/color-picker-macos-arm64-ci` branch also runs this matrix for
-GitHub runner validation.
+The tag workflow builds Linux x86_64 and macOS ARM64 modules in one
+Ubuntu job with Zig 0.17.0 and the vendored header. Zig cross-compiles
+the macOS module after the Linux module. The workflow uploads each
+module and its SHA-256 file as a separate GitHub Actions artifact. It
+does not run Emacs or publish a GitHub release. Keep the `Version:`
+header and `canvas-color-picker-version` equal. The temporary
+`hn/color-picker-macos-arm64-ci` branch also runs this job for GitHub
+runner validation.
 
 The package uses release assets from its matching version tag. It
 checks the binary checksum and native API before use. A GitHub Actions
@@ -209,10 +209,10 @@ Select a reachable Docker context. Then run:
 make test-release-local
 ```
 
-The target runs only the Linux matrix build in `act`. It checks the
-artifact ZIP, checksum, and ELF format. It uses local files, including
-uncommitted changes. It does not publish a release.
+The target runs both builds in one Ubuntu job in `act`. It checks each
+artifact ZIP, checksum, and binary format. It uses local files,
+including uncommitted changes. It does not publish a release.
 
 Use `bash scripts/test-release-local.sh --check-artifact macos-aarch64 ZIP`
-to check a macOS artifact's names, checksum, and Mach-O format. Neither
-check proves that the module loads on macOS.
+to check a macOS artifact separately. These checks do not prove that the
+module loads on macOS.

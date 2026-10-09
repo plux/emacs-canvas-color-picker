@@ -12,19 +12,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            platform: linux-x86_64
-            target: x86_64-linux-gnu.2.35
-            cpu: baseline
-          - os: ubuntu-24.04
-            platform: macos-aarch64
-            target: aarch64-macos
-            cpu: baseline
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Match tag to package version
@@ -42,21 +30,33 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.17.0
-          cache-key: ${{ matrix.target }}-${{ matrix.cpu }}
+          cache-key: x86_64-linux-gnu.2.35-aarch64-macos-baseline
           use-tool-cache: true
-      - name: Build native module with vendored Emacs 32 header
-        run: zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=${{ matrix.target }} -Dcpu=${{ matrix.cpu }}
-      - name: Package module and checksum
+      - name: Build Linux module with vendored Emacs 32 header
+        run: zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=x86_64-linux-gnu.2.35 -Dcpu=baseline
+      - name: Package Linux module and checksum
         shell: bash
         run: |
-          asset="canvas-color-picker-module-${ASSET_TAG}-${{ matrix.platform }}.so"
-          cp zig-out/lib/canvas-color-picker-module.so "$asset"
-          shasum -a 256 "$asset" > "$asset.sha256"
-          shasum -a 256 -c "$asset.sha256"
-          mkdir -p release-assets
-          mv "$asset" "$asset.sha256" release-assets/
+          asset="canvas-color-picker-module-${ASSET_TAG}-linux-x86_64.so"
+          mkdir -p release-assets/linux-x86_64
+          cp zig-out/lib/canvas-color-picker-module.so "release-assets/linux-x86_64/$asset"
+          (cd release-assets/linux-x86_64 && shasum -a 256 "$asset" > "$asset.sha256" && shasum -a 256 -c "$asset.sha256")
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ matrix.platform }}
-          path: release-assets/
+          name: linux-x86_64
+          path: release-assets/linux-x86_64/
+          if-no-files-found: error
+      - name: Build macOS ARM64 module with vendored Emacs 32 header
+        run: zig build -Doptimize=ReleaseFast -Demacs-include-dir=vendor -Dtarget=aarch64-macos -Dcpu=baseline
+      - name: Package macOS ARM64 module and checksum
+        shell: bash
+        run: |
+          asset="canvas-color-picker-module-${ASSET_TAG}-macos-aarch64.so"
+          mkdir -p release-assets/macos-aarch64
+          cp zig-out/lib/canvas-color-picker-module.so "release-assets/macos-aarch64/$asset"
+          (cd release-assets/macos-aarch64 && shasum -a 256 "$asset" > "$asset.sha256" && shasum -a 256 -c "$asset.sha256")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-aarch64
+          path: release-assets/macos-aarch64/
           if-no-files-found: error
